@@ -3,27 +3,22 @@ chcp 65001 >nul
 cd /d "%~dp0"
 set DEST=%USERPROFILE%\Desktop\chaldea2bb
 
-echo [1/3] 打包界面脚本...
-call npm run bundle --silent || goto :err
+rem 开发用快捷方式：构建 -> 同步到桌面 -> 启动。
+rem 之所以要同步到桌面：某些环境下直接在项目目录里运行打包好的 exe 会被 WebView2 拦下，
+rem 换个目录就正常。普通用户不需要这个脚本，用 build.cmd 的产物或 Release 包即可。
 
-echo [2/3] 生成资源包...
-pushd app
-call npx neu build || (popd & goto :err)
-popd
+call build.cmd
+if errorlevel 1 goto :err
 
-echo [3/3] 同步到桌面...
 if not exist "%DEST%" mkdir "%DEST%"
-copy /y "app\dist\chaldea2bb\resources.neu" "%DEST%\resources.neu" >nul
-copy /y "app\bin\chaldea2bb-win_x64.exe" "%DEST%\chaldea2bb-win_x64.exe" >nul
-copy /y "app\neutralino.config.json" "%DEST%\neutralino.config.json" >nul
-rem 分发件要带许可与第三方声明（Neutralino 是 MIT，要求保留声明）
-copy /y "LICENSE" "%DEST%\LICENSE" >nul
-copy /y "NOTICE.md" "%DEST%\NOTICE.md" >nul
+rem 清掉产物里已经不带的文件（配置打进 resources.neu 了，外面那份不生效）
+del /q "%DEST%\neutralino.config.json" >nul 2>nul
+del /q "%DEST%\neutralinojs.log" >nul 2>nul
+xcopy "app\dist\chaldea2bb\*" "%DEST%\" /Y /Q >nul
 
 start "" "%DEST%\chaldea2bb-win_x64.exe"
 exit /b 0
 
 :err
-echo 构建失败，请检查 node/npm 是否可用。
 pause
 exit /b 1

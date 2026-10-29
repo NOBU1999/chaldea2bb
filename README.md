@@ -16,27 +16,21 @@
 
 两个数据目录在界面「脚本设置 → 路径」里填，或者走环境变量（见下表）。程序不内置默认路径，没填会直接提示，不会去猜。
 
-## 启动
+## 使用
 
-**双击 `start.cmd`**：打包界面 → 生成资源包 → 同步到桌面 `chaldea2bb\` → 打开窗口。
+从 Releases 下载 `chaldea2bb-v0.1.0-win64.zip`，解压到任意位置，双击里面的 `chaldea2bb-win_x64.exe` 即可。**不需要装 Node，也不需要构建。**
 
-之后**直接双击桌面的 `chaldea2bb-win_x64.exe`** 即可，不用再走 `start.cmd`。桌面那个文件夹里是这几个文件：
+第一次运行要在「脚本设置 → 路径」里填两个目录（Chaldea / BBchannel），都有「选择」按钮；填完记在本机，下次不用再填。
+
+解压出来就是这些：
 
 ```
-chaldea2bb-win_x64.exe   运行时（用系统自带 WebView2）
-resources.neu            界面资源包（构建产物）
-neutralino.config.json   窗口配置
+chaldea2bb-win_x64.exe   运行时（用系统自带的 WebView2）
+resources.neu            界面资源包（窗口配置也打在里面）
 LICENSE  NOTICE.md       许可与第三方声明
 ```
 
-转换结果写在程序文件夹的 `output\`，从分享链接存下的原始数据在 `raw\`（都在 exe 旁边）。
-
-> 别直接双击工作区 `app\bin` 里的 exe：那是开发态二进制，需要命令行参数指向资源目录，单点只会闪退。日常用桌面那份即可。
-
-开发调试用 **`dev-browser.cmd`**：起本地服务 + 浏览器打开（`http://127.0.0.1:5180`），改完刷新即可，不用重新打包。
-界面右上角的 **「使用指引」** 里写了两种拿队伍的方式（共享队伍里分享 / 战斗模拟里保存），各配两张操作截图，并写明数据文件在哪（`Chaldea 主文件夹\userdata\user\userdata.json`）。
-
-Chaldea 面板上方的 **「打开输出」** 直接打开结果文件夹。
+转换结果写在旁边的 `output\`，从分享链接存下的原始数据在 `raw\`。
 
 页面流程：
 
@@ -46,6 +40,31 @@ Chaldea 面板上方的 **「打开输出」** 直接打开结果文件夹。
    - `id=` 开头的短链**不支持**：那条链接要在对方的服务器上取数据，本工具不代理，也不绕。
 
 浏览器调试模式起的服务只监听 `127.0.0.1`，不对外暴露。程序只读取你选的文件夹，不修改 Chaldea 的数据。
+
+## 自己构建
+
+需要 Node.js 18+。
+
+```bash
+npm install
+build.cmd
+```
+
+产物在 `app\dist\chaldea2bb\`：exe + `resources.neu` + 配置 + `LICENSE` / `NOTICE.md`。整个文件夹可以直接拷走，或压成 zip 发布。
+
+`build.cmd` 就是 `npm run bundle` + `npx neu build`，再把许可文件补进产物。两个坑：
+
+- 改了 `app/resources/js/*.js` 必须重新 bundle，否则窗口里跑的还是旧脚本；
+- **窗口配置是打进 `resources.neu` 的**，所以改了 `neutralino.config.json`（端口、权限白名单之类）必须重新 `neu build`，光换外面的 json 不生效。
+
+## 开发
+
+- `dev-browser.cmd`：起本地服务 + 浏览器打开 `http://127.0.0.1:5180`，改完刷新即可，不用重新打包。调界面用这个。
+- `start.cmd`：构建 → 同步到桌面 `chaldea2bb\` → 启动。开发时的快捷方式：某些环境下直接在项目目录里跑打包好的 exe 会被 WebView2 拦下，换个目录就正常，所以它固定同步到桌面再启动。
+
+界面右上角的 **「使用指引」** 里写了两种拿队伍的方式（共享队伍里分享 / 战斗模拟里保存），各配两张操作截图，并写明数据文件在哪（`Chaldea 主文件夹\userdata\user\userdata.json`）。
+
+Chaldea 面板上方的 **「打开输出」** 直接打开结果文件夹。
 
 ## 页面
 
@@ -139,7 +158,8 @@ server.mjs              本地服务（浏览器调试模式）
 examples/               参考用的 BB 脚本
 LICENSE                  MIT
 NOTICE.md                第三方组件与来源声明
-start.cmd               构建 + 同步到桌面 + 启动
+build.cmd               构建出可分发的文件夹 app\dist\chaldea2bb\)
+start.cmd               构建 + 同步到桌面 + 启动（开发用）
 dev-browser.cmd         浏览器调试模式
 ```
 
