@@ -1,0 +1,114 @@
+{
+    "servant_0_name": "娄希",
+    "servant_1_name": "Phantasmoon",
+    "servant_2_name": "奥伯龙",
+    "servant_3_name": null,
+    "servant_4_name": null,
+    "servant_5_name": null,
+    "dropImage": null,
+    "onlyFriendAssist": 0,
+    "fullEquip": 1,
+    "NPlevel": 1,
+    "randomTouch": 0,
+    "randomTime": 0,
+    "firstBattleSet": 1,
+    "intervalBF": 0,
+    "intervalAF": 0.1,
+    "scrollLimit": 0.96,
+    "clearAP": 0,
+    "allowOtherApple": 1,
+    "fullFriendshipStop": 1,
+    "gameCrushRestart": 1,
+    "dropStopNum": 0,
+    "server": "CH",
+    "skillsLevel": [
+        10,
+        10,
+        10,
+        0,
+        0,
+        0,
+        0,
+        0
+    ],
+    "assistMode": "仅从者",
+    "assistIdx": 2,
+    "assistEquip": null,
+    "master_equip": 16,
+    "usedServant": [
+        0,
+        1,
+        2
+    ],
+    "round1_extraStrategy": null,
+    "round2_extraStrategy": null,
+    "round3_extraStrategy": null,
+    "connectMode": null,
+    "snapshotDevice": null,
+    "operateDevice": null,
+    "allNotSkip": 1,
+    "servantLevel": 1,
+    "stuck_times": 0,
+    "assistTags": [],
+    "ignoreFriendship": "",
+    "addFriend": 0,
+    "noChain": 0,
+    "noSpeedupSkill": 0,
+    "stuckRestart": 0,
+    "checkStuckInterval": 30,
+    "noGrandRefresh": 1,
+    "intervalAFswipeAssist": 0.5,
+    "intervalBFchooseCard": 0.5,
+    "round1_extraSkill": [],
+    "round2_extraSkill": [],
+    "round3_extraSkill": [],
+    "round1_turns": 1,
+    "round1_turn0_skill": [
+        1,
+        4,
+        [
+            6,
+            2
+        ],
+        7
+    ],
+    "round1_turn0_np": [
+        1
+    ],
+    "round1_turn0_strategy": null,
+    "round1_turn0_condition": null,
+    "round2_turns": 1,
+    "round2_turn0_skill": [],
+    "round2_turn0_np": [
+        2
+    ],
+    "round2_turn0_strategy": null,
+    "round2_turn0_condition": null,
+    "round3_turns": 1,
+    "round3_turn0_skill": [
+        3,
+        5,
+        [
+            8,
+            2
+        ],
+        [
+            9,
+            2
+        ],
+        [
+            10,
+            2
+        ],
+        [
+            12,
+            1
+        ]
+    ],
+    "round3_turn0_np": [
+        2,
+        1
+    ],
+    "round3_turn0_strategy": null,
+    "round3_turn0_condition": null
+}

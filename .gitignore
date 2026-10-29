@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 构建产物
+app/dist/
+app/resources/js/bundle.js
+app/bin/*.exe
+
+# 本机数据 / 生成结果
+output/
+raw/
+settings.json
+folders.json
+*.log
+app/*.log
+.tmp/
+
+# 系统
+Thumbs.db
+desktop.ini
+*.tmp

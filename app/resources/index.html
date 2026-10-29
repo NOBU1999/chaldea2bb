@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <link rel="icon" href="data:,">
+<meta charset="utf-8">
+<title>chaldea2bb</title>
+<style>
+  :root { --bg:#12151a; --panel:#1a1f27; --line:#2a3140; --text:#e6e9ef; --muted:#8b95a7; --accent:#4cc2a8; --warn:#e5b567; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 "Segoe UI","Microsoft YaHei",sans-serif; }
+  header { padding:20px 26px 6px; display:flex; align-items:baseline; gap:12px; }
+  h1 { margin:0; font-size:18px; font-weight:600; }
+  header .sub { color:var(--muted); font-size:12px; }
+  main { padding:10px 26px 36px; max-width:1240px; }
+  .bar { display:flex; gap:8px; }
+  input { background:var(--panel); border:1px solid var(--line); color:var(--text); padding:9px 12px; border-radius:8px; font-size:13px; }
+  .bar input { flex:1; }
+  button { background:var(--panel); border:1px solid var(--line); color:var(--text); padding:8px 13px; border-radius:8px; cursor:pointer; font-size:12.5px; }
+  button:hover { border-color:#3b4558; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#08221c; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.mini { padding:3px 9px; font-size:11.5px; }
+  .panes { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+  .pane { border:1px solid var(--line); border-radius:10px; background:var(--panel); display:flex; flex-direction:column; min-height:300px; }
+  .pane-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
+  .pane-body { padding:10px 12px; display:flex; flex-direction:column; gap:8px; flex:1; }
+  .pane .row input { flex:1; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chips button { font-size:11.5px; padding:3px 8px; color:var(--muted); }
+  .chips button:hover { color:var(--text); }
+  .list { overflow:auto; max-height:420px; display:flex; flex-direction:column; }
+  .item { display:flex; align-items:center; gap:10px; padding:9px 2px; border-top:1px solid var(--line); }
+  .item:first-child { border-top:none; }
+  .item .name { font-weight:600; font-size:13px; }
+  .item .meta { color:var(--muted); font-size:11.5px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .empty, .empty { color:var(--muted); font-size:12px; padding:12px 2px; }
+  .result { border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:16px; display:none; }
+  .result.show { display:block; }
+  .path { font-family:Consolas,monospace; font-size:12px; color:var(--accent); word-break:break-all; }
+  .warnings { margin:8px 0 0; padding-left:18px; color:var(--warn); font-size:12px; }
+  .note { color:var(--muted); font-size:11.5px; }
+  .footnote { margin:20px 0 6px; font-size:11.5px; line-height:1.7; color:#6b7787; text-align:center; }
+  .row { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .row.end { justify-content:flex-end; }
+  pre { background:#0e1116; border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; max-height:320px; font-size:12px; }
+  .panel { border:1px solid var(--line); border-radius:10px; background:var(--panel); margin-top:14px; }
+  .panel summary { padding:10px 12px; font-size:12px; color:var(--muted); cursor:pointer; }
+  .settings { padding:2px 20px 2px; display:flex; flex-direction:column; }
+  .settings .group { padding:10px 0 6px; }
+  .settings .group + .group { border-top:1px solid var(--line); margin-top:6px; }
+  .settings .group h3 { margin:0 0 6px; font-size:11px; font-weight:600; letter-spacing:.1em; color:var(--muted); }
+  .settings .grid2 { display:grid; grid-template-columns:1fr 1fr; column-gap:44px; }
+  .settings .field { display:flex; align-items:center; gap:16px; min-height:34px; }
+  .settings .field > span { width:124px; flex:none; font-size:12.5px; color:#c2cbd9; }
+  .settings .skill-levels { display:flex; gap:4px; }
+  .settings .skill-levels input { width:40px; height:26px; padding:0 2px; text-align:center; background:#11151b; border:1px solid var(--line); border-radius:6px; color:var(--text); font-size:12px; -moz-appearance:textfield; }
+  .settings .skill-levels input::-webkit-outer-spin-button, .settings .skill-levels input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .settings .ctrl.wide { width:176px; }
+  .settings .ctrl { width:136px; height:26px; background:#11151b; border:1px solid var(--line); border-radius:6px; padding:0 8px; font-size:12px; color:var(--text); }
+  .settings .ctrl:focus { outline:none; border-color:var(--accent); }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:10; }
+  .modal.show { display:flex; }
+  .modal-box { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px; width:440px; }
+  .modal-title { font-size:15px; font-weight:600; margin-bottom:12px; }
+  .modal-box input { width:100%; background:#0e1116; }
+  .hint { color:var(--muted); font-size:11.5px; margin:8px 0 0; }
+  .guide-box { width: 880px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px); overflow: auto; }
+  .guide-sec { margin-top: 18px; }
+  .guide-sec h3 { font-size: 13.5px; margin: 0 0 8px; color: var(--text); }
+  .guide-sec ol { margin: 0 0 10px; padding-left: 20px; }
+  .guide-sec li { margin: 4px 0; font-size: 12.5px; color: var(--text); }
+  .guide-shots { display: flex; gap: 10px; }
+  .guide-shots img { width: 50%; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .guide-note { margin-top: 16px; padding: 10px 12px; border: 1px solid #3a4a2f; background: #1d2318; border-radius: 8px; font-size: 12.5px; }
+  .guide-note b { color: #cfe3a8; }
+  .guide-note code { background: #0e1116; padding: 1px 5px; border-radius: 4px; }
+  .pathpick { display:flex; gap:6px; align-items:center; width:100%; }
+  .pathpick input { flex:1; min-width:0; }
+  .pathpick button { flex:none; height:26px; }
+  .turn-list { max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  .turn-row { display:flex; align-items:center; gap:8px; padding:7px 10px; border-bottom:1px solid var(--line); cursor:pointer; font-size:12.5px; }
+  .turn-row:last-child { border-bottom:0; }
+  .turn-row:hover { background:#1a2028; }
+  .turn-row input { width:auto; }
+  .turn-text { white-space:nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>chaldea2bb</h1>
+  <span class="sub">队伍数据 → BBchannel 脚本</span>
+  <button id="guideBtn" class="primary" style="margin-left:auto;font-size:13px;padding:8px 18px;border-radius:8px">? 使用指引</button>
+</header>
+<main>
+  <div class="bar">
+    <input id="link" placeholder="粘贴分享链接">
+    <button id="linkBtn" class="primary">解析</button>
+  </div>
+
+  <details class="panel">
+    <summary>脚本设置</summary>
+    <div id="settingsGrid" class="settings"></div>
+    <div class="row end" style="padding:0 12px 12px">
+      <button id="saveSettings" class="primary mini">保存设置</button>
+    </div>
+  </details>
+
+  <div class="panes">
+    <section class="pane">
+      <div class="pane-head">
+        <span>本地队伍</span>
+        <span class="row" style="margin:0">
+          <button id="openOutput" class="mini">打开输出</button>
+          <button id="pick" class="mini">选择</button>
+        </span>
+      </div>
+      <div class="pane-body">
+        <div class="row" style="margin:0"><input id="dir" placeholder="数据目录"></div>
+        <div class="list" id="list"><div class="empty">—</div></div>
+      </div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-head">
+        <span>分享数据</span>
+        <button id="refreshRaw" class="mini">刷新</button>
+      </div>
+      <div class="pane-body">
+        <div class="list" id="rawList"><div class="empty">—</div></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="result" class="result">
+    <div class="row"><strong>原始</strong><span class="path" id="rawPath">—</span></div>
+    <div class="row"><strong>输出</strong><span class="path" id="outPath"></span></div>
+    <div class="row"><strong>存档</strong><span class="note" id="buildNote">—</span></div>
+    <ul class="warnings" id="warnings"></ul>
+    <pre id="json"></pre>
+  </div>
+
+  <div class="footnote">
+    非官方工具，与 Chaldea、BBchannel 的作者无关，也未获其背书。<br>
+    只读本地文件，不注入进程、不模拟点击、不联网。许可见 <code>LICENSE</code> 与 <code>NOTICE.md</code>。
+  </div>
+</main>
+
+<div id="nameDialog" class="modal">
+  <div class="modal-box">
+    <div class="modal-title">命名</div>
+    <input id="nameInput" spellcheck="false">
+    <div class="row end">
+      <button id="nameCancel">取消</button>
+      <button id="nameOk" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+<div id="confirmDialog" class="modal">
+  <div class="modal-box" style="width:560px">
+    <div class="modal-title">勾选要注入出卡策略的回合</div>
+    <div id="turnList" class="turn-list"></div>
+    <div class="row" id="shuffleRow" style="align-items:center;gap:8px;margin-top:12px;display:none">
+      <span class="hint" style="flex:1">洗牌最多再洗几次（0 = 洗一次就往下打）</span>
+      <input id="shuffleInput" type="number" min="0" max="10" value="0" style="width:90px">
+    </div>
+    <div class="row end">
+      <button id="confirmCancel">取消</button>
+      <button id="confirmOk" class="primary">确定并转换</button>
+    </div>
+  </div>
+</div>
+<div id="guideDialog" class="modal">
+  <div class="modal-box guide-box">
+    <div class="modal-title">使用指引</div>
+
+    <div class="guide-note">
+      <b>数据文件夹在哪</b>：Chaldea 把队伍写在自己主文件夹里 —— <code>Chaldea 主文件夹\userdata\user\userdata.json</code>；
+      例如 <code>D:\chaldea\userdata\user\userdata.json</code>。<br>
+      在本工具里选 <code>…\Chaldea\userdata</code>（或 Chaldea 主文件夹本身）都行，会自动往下找 <code>userdata.json</code>。这个文件由 Chaldea 写入，本工具只读不写。
+    </div>
+
+    <div class="guide-sec">
+      <h3>A · 从分享链接转换（别人发来的队伍 / 分享页上的队伍）</h3>
+      <ol>
+        <li>在 Chaldea 的 <b>「共享队伍」</b> 列表里，点队伍右侧的 <b>分享图标</b>。</li>
+        <li>弹出的「分享」里选 <b>第 2 条</b>（<code>data=</code> 开头的那条），复制它。</li>
+        <li>回到本工具，粘贴到顶部输入框 → 点「解析」→ 勾选要注入出卡策略的回合 → 转换。</li>
+      </ol>
+      <div class="guide-shots">
+        <img src="img/guide-share-1.png" alt="第一步：点分享图标">
+        <img src="img/guide-share-2.png" alt="第二步：选第 2 条 data= 链接">
+      </div>
+      <p class="hint">第 1 条 <code>id=</code> 开头的是短链，要联网去 Chaldea 服务器取数，本工具不代理解析，请用第 2 条。</p>
+    </div>
+
+    <div class="guide-sec">
+      <h3>B · 从自己保存的队伍转换（战斗模拟里打的）</h3>
+      <ol>
+        <li>战斗中或结算后，点右下角的 <b>「上传」</b> 按钮。</li>
+        <li>弹窗里点 <b>「保存」</b> —— 队伍就写进上面那个 <code>userdata.json</code> 了。</li>
+        <li>回到本工具，选文件夹 → 列表里会直接出现这条队伍 → 点「转换」。</li>
+      </ol>
+      <div class="guide-shots">
+        <img src="img/guide-save-1.png" alt="第一步：点右下角上传">
+        <img src="img/guide-save-2.png" alt="第二步：弹窗里点保存">
+      </div>
+    </div>
+
+    <div class="row end" style="margin-top:16px">
+      <button id="guideClose" class="primary">知道了</button>
+    </div>
+  </div>
+</div>
+<script src="js/neutralino.js"></script>
+<script src="js/bundle.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
