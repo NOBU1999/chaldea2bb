@@ -1,6 +1,6 @@
 {
   "name": "chaldea2bb",
-  "version": "0.1.0",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "description": "把 Chaldea 保存的战斗模拟队伍转换成 BBchannel 战斗脚本 JSON（非官方工具）",
