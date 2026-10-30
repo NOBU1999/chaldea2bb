@@ -75,7 +75,7 @@
   .guide-note b { color: #cfe3a8; }
   .guide-note code { background: #0e1116; padding: 1px 5px; border-radius: 4px; }
   .pathpick { display:flex; gap:6px; align-items:center; width:100%; }
-  .pathpick input { flex:1; min-width:0; }
+  .pathpick input, .pathpick select { flex:1; min-width:0; }
   .pathpick button { flex:none; height:26px; }
   .turn-list { max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
   .turn-row { display:flex; align-items:center; gap:8px; padding:7px 10px; border-bottom:1px solid var(--line); cursor:pointer; font-size:12.5px; }
@@ -83,13 +83,49 @@
   .turn-row:hover { background:#1a2028; }
   .turn-row input { width:auto; }
   .turn-text { white-space:nowrap; }
+  /* 开关 */
+  .switch-row { display:flex; align-items:center; gap:12px; margin:2px 0 6px; }
+  .switch { display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; user-select:none; }
+  .switch input { appearance:none; -webkit-appearance:none; width:36px; height:20px; border-radius:10px; background:#2c333c; position:relative; cursor:pointer; transition:background .15s; margin:0; }
+  .switch input:checked { background:#2196f3; }
+  .switch input::after { content:''; position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .15s; }
+  .switch input:checked::after { left:19px; }
+  /* 精细编辑区 */
+  .fine-body { max-height:56vh; overflow:auto; margin-top:10px; }
+  .fine-turn { border-top:1px solid var(--line); padding:12px 0 6px; }
+  .fine-turn:first-child { border-top:0; padding-top:2px; }
+  .fine-turn-title { display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
+  .fine-turn-title b { font-size:13px; }
+  .fine-turn-title span { font-size:11.5px; color:var(--muted); }
+  .fine-sec { margin:8px 0 0; }
+  .fine-sec-head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .fine-sec-head .tag { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+  .fine-sec-head .tag.want { color:#8fd0ff; border-color:#2b6cb0; }
+  .fine-sec-head .tag.deny { color:#ffb4a8; border-color:#8a4236; }
+  .fine-sec-head button { font-size:11px; padding:2px 8px; }
+  .fine-row { display:flex; gap:10px; align-items:flex-start; margin:6px 0; padding:8px; border:1px solid var(--line); border-radius:10px; background:#0f1320; }
+  .slot-card { flex:1; min-width:0; border:1px solid #232a33; border-radius:8px; padding:6px; background:#12161d; }
+  .slot-card.on { border-color:#2b6cb0; }
+  .slot-head { display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--muted); margin-bottom:4px; }
+  .slot-head button { font-size:10.5px; padding:0 6px; height:18px; }
+  .chip-row { display:flex; gap:3px; margin-top:3px; }
+  .chip { font-size:10.5px; line-height:1; padding:4px 0; flex:1; text-align:center; border:1px solid #232a33; border-radius:5px; background:#171c24; color:#9fb0c4; cursor:pointer; }
+  .chip:hover { border-color:#3a4658; color:#dfe8f3; }
+  .chip.on { background:#2196f3; border-color:#2196f3; color:#06111c; font-weight:700; position:relative; }
+  .chip.on[data-idx]::after { content: attr(data-idx); position:absolute; top:-5px; right:-3px; font-size:8px; line-height:1; padding:1px 3px; border-radius:6px; background:#06111c; color:#8fd0ff; border:1px solid #2b6cb0; }
+  .chip.np { color:#ffd479; }
+  .chip.np.on { background:#c98a1b; border-color:#c98a1b; color:#1a1206; }
+  .fine-row .del { align-self:center; font-size:11px; }
 </style>
 </head>
 <body>
 <header>
   <h1>chaldea2bb</h1>
   <span class="sub">队伍数据 → BBchannel 脚本</span>
-  <button id="guideBtn" class="primary" style="margin-left:auto;font-size:13px;padding:8px 18px;border-radius:8px">? 使用指引</button>
+  <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    <button id="openOutput" class="mini">打开输出</button>
+    <button id="guideBtn" class="primary" style="font-size:13px;padding:8px 18px;border-radius:8px">? 使用指引</button>
+  </span>
 </header>
 <main>
   <div class="bar">
@@ -110,7 +146,6 @@
       <div class="pane-head">
         <span>本地队伍</span>
         <span class="row" style="margin:0">
-          <button id="openOutput" class="mini">打开输出</button>
           <button id="pick" class="mini">选择</button>
         </span>
       </div>
@@ -157,8 +192,13 @@
 </div>
 <div id="confirmDialog" class="modal">
   <div class="modal-box" style="width:560px">
-    <div class="modal-title">勾选要注入出卡策略的回合</div>
+    <div class="modal-title">出卡策略</div>
+    <div class="switch-row">
+      <label class="switch"><input type="checkbox" id="fineToggle"><span>精细设置</span></label>
+      <span class="hint" id="fineHint">关：按记录里那三张卡注入</span>
+    </div>
     <div id="turnList" class="turn-list"></div>
+    <div id="fineBody" class="fine-body" style="display:none"></div>
     <div class="row" id="shuffleRow" style="align-items:center;gap:8px;margin-top:12px;display:none">
       <span class="hint" style="flex:1">洗牌最多再洗几次（0 = 洗一次就往下打）</span>
       <input id="shuffleInput" type="number" min="0" max="10" value="0" style="width:90px">

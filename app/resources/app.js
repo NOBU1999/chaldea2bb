@@ -55,6 +55,11 @@ function askConfirm(plan) {
     }
     $('shuffleRow').style.display = plan.shuffle ? '' : 'none';
     $('shuffleInput').value = '0';
+    $('fineToggle').checked = false;
+    $('turnList').style.display = '';
+    $('fineBody').style.display = 'none';
+    $('fineBody').innerHTML = '';
+    $('fineHint').textContent = '关：按记录里那三张卡注入';
     $('confirmDialog').classList.add('show');
   });
 }
@@ -63,18 +68,231 @@ function closeConfirm(v) {
   const r = confirmResolve; confirmResolve = null;
   if (r) r(v);
 }
-$('confirmOk').onclick = () => closeConfirm({
-  decide: true,
-  injectTurns: Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
-  shuffleRetries: Math.max(0, parseInt($('shuffleInput').value, 10) || 0),
-});
+const turnLabel = (key) => {
+  const m = /^r(\d+)t(\d+)$/.exec(key);
+  return m ? '第 ' + m[1] + ' 面' : key;
+};
+
+$('confirmOk').onclick = () => {
+  const fineOn = $('fineToggle').checked;
+  if (fineOn) {
+    pruneFine();
+    const errors = [];
+    const warns = [];
+    for (const [key, cfg] of Object.entries(fineCfg)) {
+      const r = (window.fineCheck && window.fineCheck(cfg)) || {};
+      for (const e of r.errors || []) errors.push(turnLabel(key) + '：' + e);
+      for (const w of r.warns || []) warns.push(turnLabel(key) + '：' + w);
+    }
+    if (errors.length) {
+      alert('精细策略有问题，先改掉再转换：\n\n' + errors.join('\n'));
+      return;
+    }
+    if (warns.length) alert('这些地方能生成，但请留意：\n\n' + warns.join('\n'));
+  }
+  closeConfirm({
+    decide: true,
+    injectTurns: fineOn
+      ? Object.keys(fineCfg)
+      : Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
+    shuffleRetries: Math.max(0, parseInt($('shuffleInput').value, 10) || 0),
+    fineStrategy: fineOn ? fineCfg : {},
+  });
+};
 $('confirmCancel').onclick = () => closeConfirm(null);
 $('confirmDialog').addEventListener('click', (e) => { if (e.target.id === 'confirmDialog') closeConfirm(null); });
 
+/* ---------------- 精细出卡策略（独立面板，按需启用） ---------------- */
+const CARD_CODES = ['1B', '2B', '3B', '1A', '2A', '3A', '1Q', '2Q', '3Q'];
+let fineCfg = {};          // { 'r1t0': { allow: [[slot,slot,slot]], deny: [...] } }
+let currentPlan = null;    // 当前这次转换的回合表
+
+const blankRow = () => [{ type: 2, cards: [] }, { type: 2, cards: [] }, { type: 2, cards: [] }];
+const rowFromRecord = (t) => t.cards.map((c) => {
+  if (c.kind === 'np') {
+    const m = /(\d)/.exec(c.text);
+    return { type: 0, cards: [m ? Number(m[1]) : 1] };
+  }
+  return { type: 1, cards: [c.text] };
+});
+
+// 一个格子：宝具 ①②③ 一行 + 三行指令卡（每行一个从者的 B/A/Q）
+function slotEditor(slot, index) {
+  const card = document.createElement('div');
+  card.className = 'slot-card';
+  const head = document.createElement('div');
+  head.className = 'slot-head';
+  const title = document.createElement('span');
+  const reset = document.createElement('button');
+  reset.className = 'mini';
+  reset.type = 'button';
+  reset.textContent = '缺省';
+  reset.onclick = (e) => { e.preventDefault(); slot.type = 2; slot.cards = []; paint(); };
+  head.appendChild(title);
+  head.appendChild(reset);
+  const body = document.createElement('div');
+
+  const chip = (text, extra) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip' + (extra ? ' ' + extra : '');
+    b.textContent = text;
+    return b;
+  };
+
+  function paint() {
+    title.textContent = '格' + (index + 1) + (slot.type === 2 ? '（不约束）' : '');
+    card.classList.toggle('on', slot.type !== 2);
+    body.innerHTML = '';
+
+    // 宝具：三选一
+    const npRow = document.createElement('div');
+    npRow.className = 'chip-row';
+    for (const n of [1, 2, 3]) {
+      const b = chip(n + '号宝具', 'np');
+      if (slot.type === 0 && slot.cards[0] === n) b.classList.add('on');
+      b.onclick = (e) => {
+        e.preventDefault();
+        if (slot.type === 0 && slot.cards[0] === n) { slot.type = 2; slot.cards = []; }
+        else { slot.type = 0; slot.cards = [n]; }
+        paint();
+      };
+      npRow.appendChild(b);
+    }
+    body.appendChild(npRow);
+
+    // 指令卡：按从者分行，B/A/Q 三张
+    for (const svt of [1, 2, 3]) {
+      const row = document.createElement('div');
+      row.className = 'chip-row';
+      for (const color of ['B', 'A', 'Q']) {
+        const code = svt + color;
+        const b = chip(code);
+        if (slot.type === 1 && slot.cards.includes(code)) {
+          b.classList.add('on');
+          if (slot.cards.length > 1) b.dataset.idx = String(slot.cards.indexOf(code) + 1);
+        }
+        b.onclick = (e) => {
+          e.preventDefault();
+          if (slot.type !== 1) { slot.type = 1; slot.cards = [code]; }
+          else if (slot.cards.includes(code)) {
+            slot.cards = slot.cards.filter((c) => c !== code);
+            if (!slot.cards.length) slot.type = 2;
+          } else slot.cards.push(code);
+          paint();
+        };
+        row.appendChild(b);
+      }
+      body.appendChild(row);
+    }
+  }
+
+  paint();
+  card.appendChild(head);
+  card.appendChild(body);
+  return card;
+}
+
+function fineRow(rowData, onDelete) {
+  const row = document.createElement('div');
+  row.className = 'fine-row';
+  for (let i = 0; i < 3; i++) {
+    if (!rowData[i]) rowData[i] = { type: 2, cards: [] };
+    row.appendChild(slotEditor(rowData[i], i));
+  }
+  const del = document.createElement('button');
+  del.className = 'mini del';
+  del.textContent = '删除';
+  del.onclick = (e) => { e.preventDefault(); onDelete(); };
+  row.appendChild(del);
+  return row;
+}
+
+function fineRowList(field, cfg, label, hint) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fine-sec';
+  const head = document.createElement('div');
+  head.className = 'fine-sec-head';
+  const tag = document.createElement('span');
+  tag.className = 'tag ' + (field === 'allow' ? 'want' : 'deny');
+  tag.textContent = label;
+  head.appendChild(tag);
+  const tip = document.createElement('span');
+  tip.className = 'hint';
+  tip.style.margin = '0';
+  tip.textContent = hint;
+  head.appendChild(tip);
+  wrap.appendChild(head);
+  for (const rowData of cfg[field]) {
+    wrap.appendChild(fineRow(rowData, () => {
+      cfg[field].splice(cfg[field].indexOf(rowData), 1);
+      renderFine();
+    }));
+  }
+  const add = document.createElement('button');
+  add.className = 'mini';
+  add.textContent = '+ 增加一条';
+  add.onclick = (e) => {
+    e.preventDefault();
+    cfg[field].push(blankRow());
+    renderFine();
+  };
+  head.appendChild(add);
+  return wrap;
+}
+
+function renderFine() {
+  const box = $('fineBody');
+  box.innerHTML = '';
+  const turns = (currentPlan?.turns || []).filter((t) => !t.pureNp);
+  if (!turns.length) { box.innerHTML = '<div class="empty">这次转换没有可设置的回合</div>'; return; }
+  for (const t of turns) {
+    const cfg = (fineCfg[t.key] = fineCfg[t.key] || { allow: [], deny: [] });
+    if (!cfg.allow.length && !cfg.deny.length) cfg.allow.push(rowFromRecord(t));
+    const sec = document.createElement('section');
+    sec.className = 'fine-turn';
+    const titleRow = document.createElement('div');
+    titleRow.className = 'fine-turn-title';
+    const b = document.createElement('b');
+    b.textContent = '第 ' + t.round + ' 面';
+    const rec = document.createElement('span');
+    rec.textContent = '记录：' + t.cards.map((c) => c.text).join(' + ');
+    titleRow.appendChild(b);
+    titleRow.appendChild(rec);
+    sec.appendChild(titleRow);
+    sec.appendChild(fineRowList('allow', cfg, '理想', '想按这个顺序出'));
+    sec.appendChild(fineRowList('deny', cfg, '禁忌', '这样出就不要，自动转成其余都行'));
+    box.appendChild(sec);
+  }
+}
+
+$('fineToggle').onchange = () => {
+  const on = $('fineToggle').checked;
+  $('turnList').style.display = on ? 'none' : '';
+  $('fineBody').style.display = on ? '' : 'none';
+  $('fineHint').textContent = on
+    ? '开：自己写理想 / 禁忌牌序，没写牌序的回合不注入策略'
+    : '关：按记录里那三张卡注入';
+  if (on) renderFine();
+};
+
+// 提交前把全空的行收掉：一条牌序都没写的回合等于「不注入」
+function pruneFine() {
+  for (const key of Object.keys(fineCfg)) {
+    const cfg = fineCfg[key];
+    const keep = (rows) => rows.filter((r) => r.some((s) => s.type !== 2 && (s.type === 0 || s.cards.length)));
+    cfg.allow = keep(cfg.allow);
+    cfg.deny = keep(cfg.deny);
+    if (!cfg.allow.length && !cfg.deny.length) delete fineCfg[key];
+  }
+}
+
 async function convertCall(url, body) {
+  fineCfg = {};
   const res = await window.apiPost(url, body);
   if (res.ok && res.needsConfirm) {
     const plan = res.plan || {};
+    currentPlan = plan;
     // 纯宝具的面没有指令卡，注入策略也没约束力 —— 不列出来
     const turns = (plan.turns || []).filter((t) => !t.pureNp);
     if (!turns.length && !plan.shuffle) {
@@ -160,8 +378,12 @@ async function loadTeams() {
 
 // 只负责把上次用的目录填回去（不再渲染最近目录列表）
 async function restoreFolder() {
+  if ($('dir').value.trim()) return;
   const r = await window.apiGet('/api/folders');
-  if (r.dirs?.length && !$('dir').value.trim()) $('dir').value = r.dirs[0];
+  if (r.dirs?.length) { $('dir').value = r.dirs[0]; return; }
+  // 没选过目录：设置里填了 Chaldea 目录就直接用它，省得再选一次
+  const s = await window.apiGet('/api/settings');
+  if (s.settings?.chaldeaHome) $('dir').value = s.settings.chaldeaHome;
 }
 /* raw */
 async function loadRaw() {
@@ -200,6 +422,7 @@ const SETTINGS_GROUPS = [
     items: [
       ['chaldeaHome', 'Chaldea 目录', 'text'],
       ['bbRoot', 'BBchannel 目录', 'text'],
+      ['outputDir', '输出文件夹', 'outdir'],
     ],
   },
   {
@@ -234,6 +457,23 @@ const SETTINGS_GROUPS = [
   },
 ];
 
+// 输出目录候选：默认「程序目录下的 output」；装了 BBchannel 就把它读脚本的 settings 也列出来
+async function fillOutdir(select, preferPath) {
+  const r = await window.apiGet('/api/outdirs');
+  if (!r || !r.ok) return;
+  const opts = [['', '默认：程序目录下的 output']];
+  for (const c of r.candidates || []) opts.push([c.path, c.label]);
+  const customs = Array.isArray(r.customs) ? r.customs.filter(Boolean) : [];
+  for (const p of customs) opts.push([p, '自定义：' + p]);
+  const cur = String(preferPath || r.current || '');
+  if (cur && !opts.some(([v]) => v === cur)) opts.push([cur, '自定义：' + cur]);
+  select.innerHTML = opts.map(([v, t]) => '<option value="' + v + '">' + t + '</option>').join('');
+  select.value = cur;
+  select.dataset.customs = JSON.stringify(customs);
+  select.dataset.builtins = JSON.stringify((r.candidates || []).map((c) => c.path));
+  if (select.oncustomchange) select.oncustomchange();
+}
+
 function makeControl(key, type, options, value) {
   let ctrl;
   if (type === 'levels') {
@@ -261,6 +501,10 @@ function makeControl(key, type, options, value) {
     ctrl = document.createElement('select');
     ctrl.innerHTML = '<option value="1">开</option><option value="0">关</option>';
     ctrl.value = String(value);
+  } else if (type === 'outdir') {
+    // 候选要问后端（BBchannel 的 settings 装好才知道在哪），所以先搭空下拉，回头填
+    ctrl = document.createElement('select');
+    fillOutdir(ctrl);
   } else {
     ctrl = document.createElement('input');
     ctrl.value = Array.isArray(value) ? value.join(',') : String(value ?? '');
@@ -274,8 +518,10 @@ function makeControl(key, type, options, value) {
   ctrl.dataset.key = key;
   ctrl.dataset.type = type;
 
-  // 目录类设置：输入框旁边给个「选择」按钮，弹系统目录选择框
-  if (key === 'chaldeaHome' || key === 'bbRoot') {
+  // 目录类设置：控件旁边统一放一个「选择」按钮，弹系统目录选择框
+  const PATH_KEYS = ['chaldeaHome', 'bbRoot', 'outputDir'];
+  if (PATH_KEYS.includes(key)) {
+    ctrl.classList.add('wide');
     const wrap = document.createElement('div');
     wrap.className = 'pathpick';
     const btn = document.createElement('button');
@@ -286,11 +532,50 @@ function makeControl(key, type, options, value) {
       btn.disabled = true;
       try {
         const r = await window.apiPost('/api/pick-folder');
-        if (r.ok && r.dir) ctrl.value = r.dir;
+        if (r.ok && r.dir) {
+          if (key === 'outputDir') {
+            let customs = [];
+            try { customs = JSON.parse(ctrl.dataset.customs || '[]'); } catch { customs = []; }
+            const list = customs.includes(r.dir) ? customs : [...customs, r.dir];
+            await window.apiPost('/api/settings', { settings: { outputDirs: list, outputDir: r.dir } });
+            await fillOutdir(ctrl, r.dir);
+          } else ctrl.value = r.dir;
+          schedulePersist();
+        }
       } finally { btn.disabled = false; }
     };
     wrap.appendChild(ctrl);
     wrap.appendChild(btn);
+
+    // 输出目录额外给一个「删除」：把不需要的自定义目录从下拉里去掉
+    if (key === 'outputDir') {
+      const del = document.createElement('button');
+      del.className = 'mini';
+      del.textContent = '删除';
+      del.title = '从下拉里移除这个自定义目录';
+      // 只要「不是内置项、也不是默认」，就算自定义，可以删（不依赖历史列表，老配置里的值也算）
+      const sync = () => {
+        let builtins = [];
+        try { builtins = JSON.parse(ctrl.dataset.builtins || '[]'); } catch { builtins = []; }
+        const v = ctrl.value;
+        const isCustom = !!v && !builtins.includes(v);
+        del.disabled = !isCustom;
+        del.style.opacity = isCustom ? '1' : '.45';
+        del.title = isCustom ? '从下拉里移除 ' + v : '当前不是自定义目录（默认项和 BBchannel 的 settings 不能删）';
+      };
+      ctrl.oncustomchange = sync;
+      for (const ev of ['change', 'click', 'focus', 'keyup']) ctrl.addEventListener(ev, sync);
+      del.onclick = async (e) => {
+        e.preventDefault();
+        if (del.disabled) return;
+        del.disabled = true;
+        await window.apiPost('/api/outdir/remove', { path: ctrl.value });
+        await fillOutdir(ctrl);
+        schedulePersist();
+      };
+      sync();
+      wrap.appendChild(del);
+    }
     return wrap;
   }
   return ctrl;
@@ -327,7 +612,7 @@ async function loadSettings() {
   buildSettings(r.settings || {});
 }
 
-$('saveSettings').onclick = async () => {
+function collectSettings() {
   const settings = {};
   document.querySelectorAll('[data-key]').forEach(el => {
     if (el.dataset.type === 'levels') {
@@ -335,17 +620,38 @@ $('saveSettings').onclick = async () => {
       return;
     }
     const v = el.value;
-    if (v === '') return;
+    if (v === '' && el.dataset.key !== 'outputDir') return;
     const type = el.dataset.type;
     if (type === 'num' || type === 'bool') settings[el.dataset.key] = Number(v);
     else if (type === 'list') settings[el.dataset.key] = v.split(',').map(x => Number(x.trim())).filter(n => !Number.isNaN(n));
     else if (el.dataset.key === 'skillsLevel') settings[el.dataset.key] = v.split(',').map(x => Number(x.trim())).filter(n => !Number.isNaN(n));
     else settings[el.dataset.key] = v;
   });
+  return settings;
+}
+
+let persistTimer = null;
+
+async function persistSettings(showLabel) {
+  clearTimeout(persistTimer);
+  persistTimer = null;
+  const settings = collectSettings();
   const r = await post('/api/settings', { settings });
-  $('saveSettings').textContent = r.ok ? '已保存' : '保存失败';
-  setTimeout(() => { $('saveSettings').textContent = '保存设置'; }, 1200);
-};
+  if (showLabel) {
+    $('saveSettings').textContent = r.ok ? '已保存' : '保存失败';
+    setTimeout(() => { $('saveSettings').textContent = '保存设置'; }, 1200);
+  }
+}
+
+// 面板里任何改动都立刻落盘（防抖 400ms）——不用记得点保存，也不会重启后回到初始值
+function schedulePersist() {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => persistSettings(false), 400);
+}
+
+$('settingsGrid').addEventListener('change', schedulePersist);
+$('settingsGrid').addEventListener('input', schedulePersist);
+$('saveSettings').onclick = () => persistSettings(true);
 
 loadSettings();
 /* 使用指引 */
