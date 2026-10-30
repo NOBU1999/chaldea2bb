@@ -142,6 +142,185 @@ export function assignRounds(turnCount, waveCount, mode = 'flat') {
   return head;
 }
 
+// ---- 精细出卡策略（界面「精细策略」面板）----
+// 用户给的是「想要的牌序」和「不要的牌序」，这里翻译成 BB 的策略数组：
+//   想要 → 一条策略；
+//   不要 → BB 没有排除语法，只能按「某一格不是那样」拆成最多三条补集。
+const CARD_UNIVERSE = ['1B', '2B', '3B', '1A', '2A', '3A', '1Q', '2Q', '3Q'];
+const deffSlot = () => ({ type: 2, cards: [], criticalStar: 0, more_or_less: true });
+const cardSlot = (cards) => ({ type: 1, cards, criticalStar: 0, more_or_less: true });
+const npSlot = (n) => ({ type: 0, cards: [n], criticalStar: 0, more_or_less: true });
+const normSlot = (s) => {
+  const type = Number(s?.type);
+  if (type === 0) { const n = Number(s?.cards?.[0]); return n >= 1 && n <= 3 ? npSlot(n) : deffSlot(); }
+  if (type === 1) { const cards = (s?.cards || []).filter((c) => CARD_UNIVERSE.includes(c)); return cards.length ? cardSlot(cards) : deffSlot(); }
+  return deffSlot();
+};
+const isDef = (slot) => slot.type === 2;
+
+// ---- 校验：哪些配置根本生成不出来 ----
+// 集合表示：null = 全都要（缺省），否则是字符串集合；宝具写成 'NP1'…'NP3'
+const ALL_NP = ['NP1', 'NP2', 'NP3'];
+const slotSet = (slot) => {
+  if (!slot || slot.type === 2) return null;
+  if (slot.type === 0) return new Set(['NP' + slot.cards[0]]);
+  return new Set(slot.cards);
+};
+const interNonEmpty = (a, b) => {
+  if (a === null || b === null) return true;
+  for (const x of a) if (b.has(x)) return true;
+  return false;
+};
+const isSubset = (a, b) => {
+  if (a === null) return b === null;
+  if (b === null) return true;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+};
+const sameSet = (a, b) => (a === null && b === null) || (a !== null && b !== null && a.size === b.size && isSubset(a, b));
+const rowSets = (row) => [slotSet(row?.[0]), slotSet(row?.[1]), slotSet(row?.[2])];
+const rowFilled = (row) => (row || []).some((s) => s && s.type !== 2 && (s.type === 0 || (s.cards || []).length));
+
+// 返回 { errors: 不能生成, warns: 能生成但要提醒 }
+export function checkFineConfig(cfg) {
+  const errors = [];
+  const warns = [];
+  const allow = (cfg?.allow || []).filter(rowFilled);
+  const deny = (cfg?.deny || []).filter(rowFilled);
+
+  (cfg?.allow || []).forEach((row, i) => {
+    if (rowFilled(row)) return;
+    errors.push('理想第 ' + (i + 1) + ' 条三格都是「缺省」：等于没有任何约束，会把后面的条目全部挡住');
+  });
+  (cfg?.deny || []).forEach((row, i) => {
+    if (rowFilled(row)) return;
+    errors.push('禁忌第 ' + (i + 1) + ' 条三格都是「缺省」：没有排除任何东西');
+  });
+
+  deny.forEach((row, i) => {
+    (row || []).forEach((slot, k) => {
+      if (slot && slot.type === 1 && (slot.cards || []).length >= CARD_UNIVERSE.length) {
+        errors.push('禁忌第 ' + (i + 1) + ' 条的格' + (k + 1) + ' 排除了全部指令卡：补集是空的，生成不出来');
+      }
+    });
+    const filled = (row || []).filter((s) => s && s.type !== 2 && (s.type === 0 || (s.cards || []).length)).length;
+    if (filled >= 2) warns.push('禁忌第 ' + (i + 1) + ' 条同时约束了 ' + filled + ' 格：这种写法只有第一条会生效，建议改成逐格写');
+  });
+
+  allow.forEach((aRow, ai) => {
+    const as = rowSets(aRow);
+    deny.forEach((dRow, di) => {
+      const ds = rowSets(dRow);
+      const allHit = [0, 1, 2].every((k) => interNonEmpty(as[k], ds[k]));
+      if (!allHit) return;
+      const covered = [0, 1, 2].every((k) => isSubset(as[k], ds[k]));
+      if (covered) errors.push('理想第 ' + (ai + 1) + ' 条落在禁忌第 ' + (di + 1) + ' 条里：这条策略生成不出来，请改掉其中一个');
+      else warns.push('理想第 ' + (ai + 1) + ' 条与禁忌第 ' + (di + 1) + ' 条可能重合，抽到特定手牌时仍会踩到禁忌');
+    });
+    allow.forEach((bRow, bi) => {
+      if (bi <= ai) return;
+      const bs = rowSets(bRow);
+      if ([0, 1, 2].every((k) => isSubset(bs[k], as[k])) && ![0, 1, 2].every((k) => sameSet(as[k], bs[k]))) {
+        warns.push('理想第 ' + (bi + 1) + ' 条被第 ' + (ai + 1) + ' 条包含：基本不会生效，可以删掉');
+      }
+    });
+  });
+
+  deny.forEach((aRow, ai) => {
+    deny.forEach((bRow, bi) => {
+      if (bi <= ai) return;
+      const as = rowSets(aRow), bs = rowSets(bRow);
+      if ([0, 1, 2].every((k) => isSubset(as[k], bs[k])) && ![0, 1, 2].every((k) => sameSet(as[k], bs[k]))) {
+        warns.push('禁忌第 ' + (ai + 1) + ' 条被第 ' + (bi + 1) + ' 条包含：多余，可以删掉');
+      }
+    });
+  });
+
+  return { errors, warns };
+}
+
+// cfg = { allow: [[slot,slot,slot], …], deny: [[slot,slot,slot], …] }
+// prefer = 记录里那回合出的卡（用来决定"格内优先顺序"：记录里的卡排最前）
+export function fineToStrategies(cfg, prefer = []) {
+  const out = [];
+  const seen = new Set();
+  const push = (slots) => {
+    if (slots.every(isDef)) return;                       // 三格都不约束 = 不写
+    const key = JSON.stringify(slots);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ card1: slots[0], card2: slots[1], card3: slots[2], breakpoint: [false, false], colorFirst: true });
+  };
+  const orderedCards = (allowed) => {
+    const first = prefer.filter((c) => allowed.includes(c));
+    return [...new Set([...first, ...allowed])];
+  };
+
+  for (const row of cfg?.allow || []) push((row || []).map(normSlot));
+
+  // 单格禁忌可以合成一条：BB 只取「第一条凑得出的策略」，合成后才能同时生效
+  const forbidCards = [null, null, null];
+  const forbidNp = [null, null, null];
+  const multi = [];
+  for (const row of cfg?.deny || []) {
+    const slots = (row || []).map(normSlot);
+    const used = slots.map((s, i) => (isDef(s) ? -1 : i)).filter((i) => i >= 0);
+    if (used.length === 1) {
+      const i = used[0];
+      const slot = slots[i];
+      if (slot.type === 0) (forbidNp[i] = forbidNp[i] || new Set()).add(slot.cards[0]);
+      else {
+        forbidCards[i] = forbidCards[i] || new Set();
+        for (const c of slot.cards) forbidCards[i].add(c);
+      }
+    } else if (used.length >= 2) {
+      multi.push(slots);
+    }
+  }
+
+  // 合成后的那一格：允许 = 全部卡减掉被禁的，顺序仍按记录优先
+  const merged = [deffSlot(), deffSlot(), deffSlot()];
+  let mergedAny = false;
+  for (let i = 0; i < 3; i++) {
+    if (forbidCards[i]) {
+      const allowed = CARD_UNIVERSE.filter((c) => !forbidCards[i].has(c));
+      if (allowed.length) { merged[i] = cardSlot(orderedCards(allowed)); mergedAny = true; }
+    } else if (forbidNp[i]) {
+      const left = [1, 2, 3].filter((n) => !forbidNp[i].has(n));
+      if (left.length === 1) { merged[i] = npSlot(left[0]); mergedAny = true; }
+      else if (left.length > 1) {
+        for (const n of left) {
+          const one = [deffSlot(), deffSlot(), deffSlot()];
+          one[i] = npSlot(n);
+          push(one);
+        }
+      }
+    }
+  }
+  if (mergedAny) push(merged.map((x) => ({ ...x })));
+
+  // 多格禁忌没法合并，只能一条打破一格；BB 取第一条，所以后面的多半不生效
+  for (const slots of multi) {
+    slots.forEach((slot, i) => {
+      if (isDef(slot)) return;
+      const others = [deffSlot(), deffSlot(), deffSlot()];
+      if (slot.type === 0) {
+        for (const n of [1, 2, 3]) {
+          if (slot.cards.includes(n)) continue;
+          others[i] = npSlot(n);
+          push(others.map((x) => ({ ...x })));
+        }
+      } else {
+        const allowed = CARD_UNIVERSE.filter((c) => !slot.cards.includes(c));
+        if (!allowed.length) return;
+        others[i] = cardSlot(orderedCards(allowed));
+        push(others.map((x) => ({ ...x })));
+      }
+    });
+  }
+  return out.length ? out : null;
+}
+
 // 把每一面/回合出的是什么牌列出来，供界面让用户决定要不要注入这一回合的出卡策略
 export function describeTurns(team, waveCount = 0) {
   const attacks = (team?.actions || []).filter((a) => a.type === 'attack');
@@ -226,6 +405,9 @@ export function convertTeam(team, ctx, overrides = {}) {
 
   const positions = [...svts];
   const backup = [...(team.team.backupSvts || [])];
+  // usedServant：这一轮出场过的位次。前排三位起步，换人上来的后备位也要算进去
+  const FRONT_COUNT = positions.length;
+  const usedSet = new Set(positions.map((_, i) => i));
   const replaceQueue = [...(team.delegate?.replaceMemberIndexes || [])];
   const actWeightQueue = [...(team.delegate?.actWeightSelections || [])];
   const actSelectQueue = [...(team.delegate?.skillActSelectSelections || [])];
@@ -324,6 +506,7 @@ export function convertTeam(team, ctx, overrides = {}) {
       if (skillId && isReplaceSkill(skillId) && replaceQueue.length) {
         const [onFieldIdx, backupIdx] = replaceQueue.shift();
         cur.skills.push([num, onFieldIdx + 1, backupIdx + 4]);
+        usedSet.add(FRONT_COUNT + backupIdx);
         if (positions[onFieldIdx] !== undefined && backup[backupIdx] !== undefined) {
           const tmp = positions[onFieldIdx];
           positions[onFieldIdx] = backup[backupIdx];
@@ -407,6 +590,7 @@ export function convertTeam(team, ctx, overrides = {}) {
       cur.strategy = (a.attacks || []).some((x) => !x.isTD)
         ? [{ card1: slots[0], card2: slots[1], card3: slots[2], breakpoint: [false, false], colorFirst: true }]
         : null;
+      cur.preferCards = (a.attacks || []).filter((x) => !x.isTD).map(cardCode);
       turnList.push(cur);
       cur = null;
     }
@@ -431,7 +615,7 @@ export function convertTeam(team, ctx, overrides = {}) {
     skillsLevel: [10, 10, 10, 0, 0, 0, 0, 0],
     assistMode: '从者礼装', assistIdx: 2, assistEquip: null,
     master_equip: mcId != null ? (ctx.mcSN[mcId] ?? null) : null,
-    usedServant: svts.map((_, i) => i),
+    usedServant: [...usedSet].sort((a, b) => a - b),
     round1_extraStrategy: null, round2_extraStrategy: null, round3_extraStrategy: null,
     connectMode: null, snapshotDevice: null, operateDevice: null,
     allNotSkip: 1, servantLevel: 1, stuck_times: 0, assistTags: [], ignoreFriendship: '',
@@ -451,7 +635,11 @@ export function convertTeam(team, ctx, overrides = {}) {
       const t = turnList[ti];
       out['round' + r + '_turn' + k + '_skill'] = t.skills;
       out['round' + r + '_turn' + k + '_np'] = t.np;
-      out['round' + r + '_turn' + k + '_strategy'] = injectThis(r, k) ? (t.strategy ?? null) : null;
+      // 用了「精细策略」就按用户给的那套，否则用记录推出来的那一条
+      const fine = overrides?.fineStrategy?.['r' + r + 't' + k];
+      out['round' + r + '_turn' + k + '_strategy'] = injectThis(r, k)
+        ? (fine ? fineToStrategies(fine, t.preferCards || []) : (t.strategy ?? null))
+        : null;
       out['round' + r + '_turn' + k + '_condition'] = t.condition ?? null;
     });
   });
