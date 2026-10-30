@@ -2,7 +2,7 @@
 // bridge.js — 同一套界面，两种后端：
 //   浏览器里（node server.mjs）走 fetch('/api/...')；独立窗口里（Neutralino）直接调文件 API。
 // app.js 只认 apiPost/apiGet，不关心跑在哪。
-import { createContext, convertTeam, describeTurns, needsShuffle } from './convert.js';
+import { createContext, convertTeam, describeTurns, needsShuffle, checkFineConfig } from './convert.js';
 import { fromUrl } from './link.js';
 
 // 只有真正跑在 Neutralino 窗口里才算（浏览器里也会加载 neutralino.js，但没有 NL_TOKEN）
@@ -89,6 +89,13 @@ async function loadMcNames(gameDir) {
   return null;
 }
 
+// 输出目录：设置里选过就用它，否则用程序目录下的 output
+async function OUT_DIR() {
+  const cfg = await settingsGet();
+  const custom = String(cfg.outputDir || '').trim();
+  return custom || ((await APP_DIR()) + '/output');
+}
+
 let ctxCache = null;
 async function getCtx() {
   if (ctxCache) return ctxCache;
@@ -138,7 +145,12 @@ async function buildPlan(team) {
 
 async function doConvert(team, body) {
   if (!body.decide) return { ok: true, needsConfirm: true, plan: await buildPlan(team) };
-  const overrides = { ...(await settingsGet()), injectTurns: body.injectTurns || [], shuffleRetries: Math.max(0, Number(body.shuffleRetries) || 0) };
+  const overrides = {
+    ...(await settingsGet()),
+    injectTurns: body.injectTurns || [],
+    shuffleRetries: Math.max(0, Number(body.shuffleRetries) || 0),
+    fineStrategy: body.fineStrategy || null,
+  };
   overrides.__quest = await findQuest(team?.quest?.id);
   const { json, warnings, meta } = convertTeam(team, await getCtx(), overrides);
   return { json, warnings, meta };
@@ -185,10 +197,11 @@ const handlers = {
     const r = await doConvert(team, body);
     if (r.needsConfirm) return r;
     const name = safeName(team.team?.name || ('team' + body.index));
-    await ensureDir((await APP_DIR()) + '/output');
-    const outPath = (await APP_DIR()) + '/output/' + name + '.json';
+    const dir = await OUT_DIR();
+    await ensureDir(dir);
+    const outPath = dir + '/' + name + '.json';
     await FS().writeFile(outPath, JSON.stringify(r.json, null, 4));
-    return { ok: true, outPath: 'output/' + name + '.json', absPath: outPath, warnings: r.warnings, meta: r.meta, json: r.json };
+    return { ok: true, outPath: outPath, absPath: outPath, warnings: r.warnings, meta: r.meta, json: r.json };
   },
   'POST /api/convert-raw': async (body) => {
     const rawFile = (await APP_DIR()) + '/raw/' + body.name;
@@ -196,10 +209,11 @@ const handlers = {
     if (!team) return { ok: false, error: 'raw 里没有这个文件' };
     const r = await doConvert(team, body);
     if (r.needsConfirm) return r;
-    await ensureDir((await APP_DIR()) + '/output');
-    const outPath = (await APP_DIR()) + '/output/' + body.name;
+    const dir = await OUT_DIR();
+    await ensureDir(dir);
+    const outPath = dir + '/' + body.name;
     await FS().writeFile(outPath, JSON.stringify(r.json, null, 4));
-    return { ok: true, outPath: 'output/' + body.name, absPath: outPath, warnings: r.warnings, meta: r.meta, json: r.json };
+    return { ok: true, outPath: outPath, absPath: outPath, warnings: r.warnings, meta: r.meta, json: r.json };
   },
   'POST /api/link': async (body) => {
     const r = await fromUrl(String(body.url || '').trim());
@@ -230,21 +244,57 @@ const handlers = {
     }
     return { ok: true, files: out };
   },
+  // 输出目录候选：默认 <程序目录>/output；BBchannel 装好了就把它读脚本的 settings 也列出来
+  'GET /api/outdirs': async () => {
+    const cfg = await settingsGet();
+    const cands = [];
+    const bb = String(cfg.bbRoot || '').replace(/[\\/]+$/, '');
+    for (const d of [bb + '/settings', bb.replace(/[\\/][^\\/]+$/, '') + '/settings']) {
+      if (!bb || !d || d === '/settings') continue;
+      if (await fileExists(d)) { cands.push({ label: 'BBchannel 的 settings（BB 直接读这里）', path: d }); break; }
+    }
+    return {
+      ok: true,
+      defaultDir: (await APP_DIR()) + '/output',
+      current: String(cfg.outputDir || ''),
+      candidates: cands,
+      customs: Array.isArray(cfg.outputDirs) ? cfg.outputDirs : [],
+    };
+  },
+  // 从下拉里删掉一个自定义目录（当前正用着就退回默认）
+  'POST /api/outdir/remove': async (body) => {
+    const cfg = await settingsGet();
+    const path = String(body.path || '');
+    if (!path) return { ok: false, error: '没有指定目录' };
+    const customs = (Array.isArray(cfg.outputDirs) ? cfg.outputDirs : []).filter((p) => p !== path);
+    const next = { ...cfg, outputDirs: customs };
+    if (String(cfg.outputDir || '') === path) next.outputDir = '';
+    localStorage.setItem('c2b.settings', JSON.stringify(next));
+    return { ok: true, settings: next };
+  },
   'GET /api/settings': async () => ({ ok: true, settings: await settingsGet() }),
   'POST /api/settings': async (body) => {
-    const next = {};
-    for (const [k, v] of Object.entries(body.settings || {})) if (v !== null && v !== '' && v !== undefined) next[k] = v;
+    // 合并而不是覆盖：界面每次改动只会送变化的那几项
+    const next = { ...(await settingsGet()) };
+    const patch = body.settings || {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined) continue;
+      if (v === '' && k !== 'outputDir') continue; // 空字符串唯一有意义的场景：把输出目录清回默认
+      next[k] = v;
+    }
     localStorage.setItem('c2b.settings', JSON.stringify(next));
-    // 换目录后必须连数据一起重读：否则还拿旧目录的表在转，谁也不会有提示
-    pathsCache = null;
-    ctxCache = null;
-    questCache.clear();
+    // 只有换目录才重读数据表；改个开关不必把人家几张表全读一遍
+    if ('chaldeaHome' in patch || 'bbRoot' in patch) {
+      pathsCache = null;
+      ctxCache = null;
+      questCache.clear();
+    }
     return { ok: true, settings: next };
   },
   'POST /api/reveal': async (body) => {
     let target = body.target;
     if (target === 'output' || !target) {
-      target = (await APP_DIR()) + '/output';
+      target = await OUT_DIR();
       await ensureDir(target);
     }
     const winPath = String(target).replace(/\//g, '\\');
@@ -261,3 +311,5 @@ async function call(method, url, body) {
 window.apiPost = (url, body) => (NL ? call('POST', url, body) : post(url, body));
 window.apiGet = (url) => (NL ? call('GET', url) : fetch(url).then((r) => r.json()));
 window.apiMode = NL ? 'app' : 'browser';
+// 界面上提交精细策略前先自检（规则和生成时共用一份）
+window.fineCheck = checkFineConfig;

@@ -15,6 +15,8 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, 'app', 'resources');
 const OUT = path.join(ROOT, 'output');
 const RAW = path.join(ROOT, 'raw');
+// 输出目录：设置里选过就用它，否则用项目下的 output
+const outDirPath = () => loadSettings().outputDir || OUT;
 // 路径优先取界面设置，其次环境变量；都没有就跑不了（会在下面给出提示）
 const BB_ROOT = process.env.BB_ROOT || '';
 const pathCfg = () => {
@@ -183,10 +185,13 @@ async function handle(req, res) {
     const overrides = loadSettings();
     overrides.injectTurns = Array.isArray(body.injectTurns) ? body.injectTurns : [];
     overrides.shuffleRetries = Math.max(0, Number(body.shuffleRetries) || 0);
+    overrides.fineStrategy = body.fineStrategy || null;
     overrides.__quest = findQuest(pathCfg().ch, team?.quest?.id);
     const { json, warnings, meta } = convertTeam(team, getCtx(), overrides);
     const name = safeName(team.team?.name || ('team' + index));
-    const outPath = path.join(OUT, name + '.json');
+    const dir = outDirPath();
+    fs.mkdirSync(dir, { recursive: true });
+    const outPath = path.join(dir, name + '.json');
     fs.writeFileSync(outPath, JSON.stringify(json, null, 4), 'utf8');
     return sendJson(res, 200, { ok: true, outPath: path.relative(ROOT, outPath), absPath: outPath, warnings, meta, json });
   }
@@ -216,15 +221,46 @@ async function handle(req, res) {
     });
   }
 
+  // 输出目录候选：默认项目下的 output；BBchannel 装好了就把它读脚本的 settings 也列出来
+  if (req.method === 'GET' && p === '/api/outdirs') {
+    const s = loadSettings();
+    const bb = String(s.bbRoot || BB_ROOT || '').replace(/[\\/]+$/, '');
+    const cands = [];
+    for (const d of [bb + '/settings', path.dirname(bb) + '/settings']) {
+      if (!bb || !d) continue;
+      try { if (fs.statSync(d).isDirectory()) { cands.push({ label: 'BBchannel 的 settings（BB 直接读这里）', path: d }); break; } } catch {}
+    }
+    return sendJson(res, 200, {
+      ok: true, defaultDir: OUT, current: s.outputDir || '', candidates: cands,
+      customs: Array.isArray(s.outputDirs) ? s.outputDirs : [],
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/outdir/remove') {
+    const { path: drop } = await readBody(req);
+    const s = loadSettings();
+    const customs = (Array.isArray(s.outputDirs) ? s.outputDirs : []).filter((x) => x !== drop);
+    s.outputDirs = customs;
+    if (s.outputDir === drop) s.outputDir = '';
+    saveSettings(s);
+    return sendJson(res, 200, { ok: true, settings: s });
+  }
+
   if (p === '/api/settings') {
     if (req.method === 'GET') return sendJson(res, 200, { ok: true, settings: loadSettings() });
     const body = await readBody(req);
-    const next = {};
-    for (const [k, v] of Object.entries(body.settings || {})) {
-      if (v !== null && v !== '' && v !== undefined) next[k] = v;
+    // 合并而不是覆盖：界面每次改动只送变化的那几项
+    const next = { ...loadSettings() };
+    const patch = body.settings || {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined) continue;
+      if (v === '' && k !== 'outputDir') continue;
+      next[k] = v;
     }
     saveSettings(next);
-    ctxCache = null; // 换目录后重读数据表
+    if ('chaldeaHome' in patch || 'bbRoot' in patch) {
+      ctxCache = null; // 只有换目录才重读数据表
+    }
     return sendJson(res, 200, { ok: true, settings: next });
   }
 
@@ -275,9 +311,12 @@ async function handle(req, res) {
     const overrides = loadSettings();
     overrides.injectTurns = Array.isArray(body.injectTurns) ? body.injectTurns : [];
     overrides.shuffleRetries = Math.max(0, Number(body.shuffleRetries) || 0);
+    overrides.fineStrategy = body.fineStrategy || null;
     overrides.__quest = findQuest(pathCfg().ch, team?.quest?.id);
     const { json, warnings, meta } = convertTeam(team, getCtx(), overrides);
-    const outPath = path.join(OUT, name);
+    const dir = outDirPath();
+    fs.mkdirSync(dir, { recursive: true });
+    const outPath = path.join(dir, name);
     fs.writeFileSync(outPath, JSON.stringify(json, null, 4), 'utf8');
     return sendJson(res, 200, {
       ok: true, outPath: path.relative(ROOT, outPath), absPath: outPath, warnings, meta, json,
@@ -288,7 +327,7 @@ async function handle(req, res) {
   if (req.method === 'POST' && p === '/api/reveal') {
     const { target } = await readBody(req);
     let abs = target ? (path.isAbsolute(target) ? target : path.join(ROOT, target)) : '';
-    if (target === 'output') { abs = OUT; try { fs.mkdirSync(OUT, { recursive: true }); } catch {} }
+    if (target === 'output') { abs = outDirPath(); try { fs.mkdirSync(abs, { recursive: true }); } catch {} }
     if (abs && fs.existsSync(abs)) spawn('explorer.exe', ['/select,', abs], { detached: true }).unref();
     return sendJson(res, 200, { ok: true });
   }
