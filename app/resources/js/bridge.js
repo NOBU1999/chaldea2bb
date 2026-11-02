@@ -2,7 +2,7 @@
 // bridge.js — 同一套界面，两种后端：
 //   浏览器里（node server.mjs）走 fetch('/api/...')；独立窗口里（Neutralino）直接调文件 API。
 // app.js 只认 apiPost/apiGet，不关心跑在哪。
-import { createContext, convertTeam, describeTurns, needsShuffle, checkFineConfig } from './convert.js';
+import { createContext, convertTeam, describeTurns, inferWaveTurns, needsShuffle, checkFineConfig } from './convert.js';
 import { fromUrl } from './link.js';
 
 // 只有真正跑在 Neutralino 窗口里才算（浏览器里也会加载 neutralino.js，但没有 NL_TOKEN）
@@ -116,9 +116,33 @@ async function getCtx() {
 }
 
 const questCache = new Map();
+// Chaldea 的关卡数据有两份：atlas_api 是"打开过这一关才缓存"，cache/game/questPhases 是下载时落盘的全局表。
+// 只看前者会让没打开过的关卡查不到面数（表现为整队都算成第 1 面）。
+let questIndex = null;
+async function loadQuestIndex() {
+  if (questIndex) return questIndex;
+  questIndex = new Map();
+  const p = await paths();
+  for (const e of await listDir(p.ch + '/userdata/cache/game')) {
+    if (e.dir || !/^questPhases(\.[0-9]+)?\.json$/i.test(e.name)) continue;
+    let arr;
+    try { arr = JSON.parse(await FS().readFile(e.path)); } catch { continue; }
+    if (!Array.isArray(arr)) continue;
+    for (const q of arr) {
+      if (q && q.id && Array.isArray(q.stages) && q.stages.length) questIndex.set(q.id, q);
+    }
+  }
+  return questIndex;
+}
 async function findQuest(questId) {
   if (!questId) return null;
   if (questCache.has(questId)) return questCache.get(questId);
+  const idx = await loadQuestIndex();
+  if (idx.has(questId)) {
+    const q = idx.get(questId);
+    questCache.set(questId, q);
+    return q;
+  }
   const needle = '"id":' + questId;
   const p = await paths();
   for (const e of await listDir(p.ch + '/userdata/temp/atlas_api')) {
@@ -129,6 +153,7 @@ async function findQuest(questId) {
     try {
       const q = JSON.parse(text);
       if (q && q.id === questId && Array.isArray(q.stages) && q.stages.length) {
+        idx.set(questId, q);
         questCache.set(questId, q);
         return q;
       }
@@ -140,7 +165,18 @@ async function findQuest(questId) {
 async function buildPlan(team) {
   const quest = await findQuest(team?.quest?.id);
   const waves = (await getCtx()).waveSlotsOf(quest);
-  return { turns: describeTurns(team, waves?.length ?? 0), shuffle: needsShuffle(team) ? { needed: true } : null };
+  const waveCount = waves?.length ?? 0;
+  const turnCount = (team?.actions || []).filter((a) => a.type === 'attack').length;
+  const suggest = inferWaveTurns(team, waves || null);
+  return {
+    turns: describeTurns(team, waveCount, suggest),
+    waveTurnsSuggest: suggest,
+    turnCount,
+    waveCount,
+    waveSlots: waves || null,
+    questFound: waveCount > 0,
+    shuffle: needsShuffle(team) ? { needed: true } : null,
+  };
 }
 
 async function doConvert(team, body) {
@@ -148,6 +184,8 @@ async function doConvert(team, body) {
   const overrides = {
     ...(await settingsGet()),
     injectTurns: body.injectTurns || [],
+    waveTurns: Array.isArray(body.waveTurns) && body.waveTurns.length ? body.waveTurns : null,
+    __waveSlots: Array.isArray(body.enemySlots) && body.enemySlots.length ? body.enemySlots : null,
     shuffleRetries: Math.max(0, Number(body.shuffleRetries) || 0),
     fineStrategy: body.fineStrategy || null,
   };

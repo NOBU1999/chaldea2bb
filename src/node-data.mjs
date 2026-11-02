@@ -47,9 +47,20 @@ export function loadContextData({ bbRoot, chaldeaHome }) {
   };
 }
 
-// 在 atlas 缓存里找这条关卡（文件名是哈希，只能挨个看 id）
+// 关卡数据有两份：atlas_api（打开过才有）与 cache/game/questPhases（下载时落盘）。先查后者，再挨个扫前者
 export function findQuest(chaldeaHome, questId) {
   if (!questId) return null;
+  const gameDir = chaldeaHome + '/userdata/cache/game';
+  let gfiles = [];
+  try { gfiles = fs.readdirSync(gameDir); } catch {}
+  for (const f of gfiles) {
+    if (!/^questPhases(\.[0-9]+)?\.json$/i.test(f)) continue;
+    let arr;
+    try { arr = JSON.parse(fs.readFileSync(gameDir + '/' + f, 'utf8')); } catch { continue; }
+    if (!Array.isArray(arr)) continue;
+    const hit = arr.find((q) => q && q.id === questId && Array.isArray(q.stages) && q.stages.length);
+    if (hit) return hit;
+  }
   const dir = chaldeaHome + '/userdata/temp/atlas_api';
   let files;
   try { files = fs.readdirSync(dir); } catch { return null; }

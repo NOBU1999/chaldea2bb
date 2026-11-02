@@ -321,10 +321,56 @@ export function fineToStrategies(cfg, prefer = []) {
   return out.length ? out : null;
 }
 
-// 把每一面/回合出的是什么牌列出来，供界面让用户决定要不要注入这一回合的出卡策略
-export function describeTurns(team, waveCount = 0) {
+// 按用户填的「每面几个回合」把回合分组；数字对不上总回合数就返回 null（回退到默认分配）
+export function roundsFromWaveTurns(turnCount, waveTurns) {
+  if (!Array.isArray(waveTurns) || !waveTurns.length || waveTurns.length > 3) return null;
+  const ns = waveTurns.map((n) => Math.trunc(Number(n)));
+  if (ns.some((n) => !Number.isFinite(n) || n < 1)) return null;
+  if (ns.reduce((a, b) => a + b, 0) !== turnCount) return null;
+  const out = [];
+  let off = 0;
+  for (const n of ns) {
+    const idxs = [];
+    for (let k = 0; k < n; k++) idxs.push(off + k);
+    off += n;
+    out.push(idxs);
+  }
+  return out;
+}
+
+// 面数已知、回合数比面多时，猜每面各打几回合：
+// 每次攻击都记了目标站位（deckId = enemyTarget + 1），分组必须让目标落在那一面的敌人里。
+// 唯一满足的分组就是答案；有多个说得通的（或全都不满足）就返回 null，交给用户填。
+export function inferWaveTurns(team, waveSlots) {
   const attacks = (team?.actions || []).filter((a) => a.type === 'attack');
-  const rounds = assignRounds(attacks.length, waveCount);
+  const n = attacks.length;
+  const w = Array.isArray(waveSlots) ? waveSlots.length : 0;
+  if (!w || n <= w || w > 3) return null;
+  const targets = attacks.map((a) => (a?.options?.enemyTarget ?? 0) + 1);
+  const parts = [];
+  const build = (left, slots, acc) => {
+    if (slots === 1) { if (left >= 1) parts.push([...acc, left]); return; }
+    for (let k = 1; k <= left - (slots - 1); k++) build(left - k, slots - 1, [...acc, k]);
+  };
+  build(n, w, []);
+  const fits = parts.filter((ns) => {
+    let off = 0;
+    for (let i = 0; i < ns.length; i++) {
+      const enemies = waveSlots[i] || [];
+      for (let k = 0; k < ns[i]; k++) {
+        if (!enemies.includes(targets[off + k])) return false;
+      }
+      off += ns[i];
+    }
+    return true;
+  });
+  return fits.length === 1 ? fits[0] : null;
+}
+
+// 把每一面/回合出的是什么牌列出来，供界面让用户决定要不要注入这一回合的出卡策略
+export function describeTurns(team, waveCount = 0, waveTurns = null) {
+  const attacks = (team?.actions || []).filter((a) => a.type === 'attack');
+  const rounds = roundsFromWaveTurns(attacks.length, waveTurns) || assignRounds(attacks.length, waveCount);
   const where = new Map();
   rounds.forEach((idxs, ri) => idxs.forEach((ti, k) => where.set(ti, { round: ri + 1, turn: k })));
   const list = [];
@@ -405,8 +451,15 @@ export function convertTeam(team, ctx, overrides = {}) {
 
   const positions = [...svts];
   const backup = [...(team.team.backupSvts || [])];
-  // usedServant：这一轮出场过的位次。前排三位起步，换人上来的后备位也要算进去
   const FRONT_COUNT = positions.length;
+  // 助战位：Chaldea 记录里 supportType 不是 none 的那一格（0-5）。没有就留空，不猜默认值
+  const slotOf = (i) => (i < FRONT_COUNT ? positions[i] : backup[i - FRONT_COUNT]);
+  let assistIdx = null;
+  for (let i = 0; i < FRONT_COUNT + backup.length; i++) {
+    const s = slotOf(i);
+    if (s && s.supportType && s.supportType !== 'none') { assistIdx = i; break; }
+  }
+  // usedServant：BB 面板回填用的「用到的槽位」，不含助战位（助战不算自用从者）
   const usedSet = new Set(positions.map((_, i) => i));
   const replaceQueue = [...(team.delegate?.replaceMemberIndexes || [])];
   const actWeightQueue = [...(team.delegate?.actWeightSelections || [])];
@@ -430,10 +483,22 @@ export function convertTeam(team, ctx, overrides = {}) {
   // 常规是 3 面 3 回合；柱柱战这类只有一面、可能打很多回合，多出来的回合都归那一面 —— 所以超出面数时按最后一面算。
   const turnCount = (team.actions || []).filter(a => a.type === 'attack').length;
   const waveCount = waveSlots?.length ?? 0;
-  if (waveCount > 0 && turnCount > waveCount) {
-    warnings.push('这一队打了 ' + turnCount + ' 回合、关卡只有 ' + waveCount + ' 面 —— 多出来的回合按最后一面处理（柱柱战这类只有一面的情况是对的；若前面某面打了多回合则站位可能偏）');
+  // 用户指定了「每面几个回合」就按它分组；没指定则退回默认（一个回合当一个面）
+  const planRounds = roundsFromWaveTurns(turnCount, overrides?.waveTurns);
+  const turnWave = new Map();
+  if (planRounds) planRounds.forEach((idxs, wi) => idxs.forEach((ti) => turnWave.set(ti, wi)));
+  if (planRounds) {
+    if (waveCount > 0 && planRounds.length !== waveCount) {
+      warnings.push('你填的每面回合数是 ' + planRounds.length + ' 组，关卡数据是 ' + waveCount + ' 面 —— 按你填的来，敌方站位可能对不上');
+    }
+  } else if (waveCount > 0 && turnCount > waveCount) {
+    warnings.push('这一队打了 ' + turnCount + ' 回合、关卡只有 ' + waveCount + ' 面，回合和面对应不上 —— 第 ' + (waveCount + 1) + ' 回合以后会错位，需要在转换前指定「每面回合数」（例如 2,1）');
   }
-  const stageOf = (i) => (waveSlots?.length ? waveSlots[Math.min(i, waveSlots.length - 1)] : null);
+  const stageOf = (i) => {
+    if (!waveSlots?.length) return null;
+    const wi = turnWave.has(i) ? turnWave.get(i) : Math.min(i, waveSlots.length - 1);
+    return waveSlots[Math.min(wi, waveSlots.length - 1)];
+  };
   const stageDefault = (stage) => (stage && stage.length ? Math.min(...stage) : 1);
   const startTurn = () => {
     turnIndex++;
@@ -613,9 +678,9 @@ export function convertTeam(team, ctx, overrides = {}) {
     firstBattleSet: 1, intervalBF: 0.0, intervalAF: 0.1, scrollLimit: 0.96, clearAP: 1,
     allowOtherApple: 0, fullFriendshipStop: 1, gameCrushRestart: 0, dropStopNum: 0, server: 'CH',
     skillsLevel: [10, 10, 10, 0, 0, 0, 0, 0],
-    assistMode: '从者礼装', assistIdx: 2, assistEquip: null,
+    assistMode: '从者礼装', assistIdx, assistEquip: null,
     master_equip: mcId != null ? (ctx.mcSN[mcId] ?? null) : null,
-    usedServant: [...usedSet].sort((a, b) => a - b),
+    usedServant: [...usedSet].filter((i) => i !== assistIdx).sort((a, b) => a - b),
     round1_extraStrategy: null, round2_extraStrategy: null, round3_extraStrategy: null,
     connectMode: null, snapshotDevice: null, operateDevice: null,
     allNotSkip: 1, servantLevel: 1, stuck_times: 0, assistTags: [], ignoreFriendship: '',
@@ -626,7 +691,7 @@ export function convertTeam(team, ctx, overrides = {}) {
   };
 
   // 按面分配回合：一面可以不止一回合（柱柱战就是一面打很多回合）
-  const rounds = assignRounds(turnList.length, waveCount, overrides?.roundMode);
+  const rounds = planRounds || assignRounds(turnList.length, waveCount, overrides?.roundMode);
   if (rounds.length > 3) warnings.push('面数超过 3，后面的面没有写进脚本');
   rounds.slice(0, 3).forEach((idxs, ri) => {
     const r = ri + 1;
