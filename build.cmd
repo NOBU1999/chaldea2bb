@@ -2,6 +2,9 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
+echo [0/2] 检查界面脚本语法...
+node --check "app\resources\app.js" || (echo app.js 有语法错误，先修掉 & goto :err)
+
 echo [1/2] 打包界面脚本...
 call npm run bundle --silent || goto :err
 
