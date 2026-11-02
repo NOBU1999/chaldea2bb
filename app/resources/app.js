@@ -33,6 +33,222 @@ function item(name, meta, onClick) {
   return el;
 }
 
+/* 两种「队伍记录里没有」的东西，分开放：
+   - 敌人站位（查不到关卡缓存时）→ 属于精细设置，开关打开才出现
+   - 每面打几回合（面数与回合数对不上时）→ 就在主面板，不用开精细设置 */
+let faces = []; // [{ enemies: Set<number>, turns: number }]
+function needSlots(plan) { return !!plan && plan.questFound === false; }
+function needTurns(plan) {
+  const tc = Number(plan && plan.turnCount) || 0;
+  const wc = Number(plan && plan.waveCount) || 0;
+  return !needSlots(plan) && wc > 1 && tc > wc;
+}
+function faceNeeded(plan) { return needSlots(plan) || needTurns(plan); }
+function initFaces(plan) {
+  const slots = Array.isArray(plan.waveSlots) ? plan.waveSlots : [];
+  const tc = Number(plan.turnCount) || 0;
+  if (slots.length) {
+    faces = slots.map((s) => ({ enemies: new Set(s || []), turns: 1 }));
+    const sug = Array.isArray(plan.waveTurnsSuggest) ? plan.waveTurnsSuggest : null;
+    if (sug && sug.length === faces.length) {
+      // 能从「目标站位落在哪一面」唯一推出来，就直接按它预填
+      faces.forEach((f, i) => { f.turns = sug[i]; });
+    } else if (tc > faces.length) {
+      faces[faces.length - 1].turns += tc - faces.length;
+    }
+  } else {
+    faces = [{ enemies: new Set(), turns: Math.max(1, tc) }];
+  }
+}
+function wavePositions(ns) {
+  const out = [];
+  let off = 0;
+  (ns || []).forEach((n, wi) => {
+    for (let k = 0; k < n; k++) out[off + k] = { round: wi + 1, turn: k };
+    off += n;
+  });
+  return out;
+}
+function updateFacesHint() {
+  const tc = Number(currentPlan && currentPlan.turnCount) || 0;
+  const sum = faces.reduce((a, f) => a + f.turns, 0);
+  const text = '（共 ' + tc + ' 回合 · 已填 ' + sum + ' 回合' + (sum === tc ? '' : '，对不上') + '）';
+  ['structHint', 'turnHint'].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = sum === tc ? '' : 'var(--warn)';
+  });
+}
+// 每面回合数：主面板上的一排小输入框（不涉及敌人站位时用这个）
+function paintTurnRow() {
+  const box = $('faceTurns');
+  box.innerHTML = '';
+  faces.forEach((f, wi) => {
+    const item = document.createElement('label');
+    item.className = 'face-turn-item';
+    const lbl = document.createElement('span');
+    lbl.textContent = '第 ' + (wi + 1) + ' 面';
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.min = '1';
+    inp.max = '9';
+    inp.value = String(f.turns);
+    const commit = (soft) => {
+      const v = Math.trunc(Number(inp.value));
+      if (!Number.isFinite(v) || v < 1 || v > 9) { if (!soft) inp.value = String(f.turns); return; }
+      f.turns = v;
+      syncFaces();
+    };
+    inp.oninput = () => commit(true);
+    inp.onchange = () => commit(false);
+    item.append(lbl, inp);
+    box.appendChild(item);
+  });
+  updateFacesHint();
+}
+let lastNs = '';
+function syncFaces() {
+  if (currentPlan) {
+    const ns = faces.map((f) => f.turns);
+    const sig = ns.join(',');
+    if (sig !== lastNs) { lastNs = sig; relabel(currentPlan, ns); }
+  }
+  updateFacesHint();
+}
+function paintFaces() {
+  const box = $('faceList');
+  box.innerHTML = '';
+  faces.forEach((f, wi) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'face';
+    const head = document.createElement('div');
+    head.className = 'face-head';
+    const name = document.createElement('span');
+    name.textContent = '第 ' + (wi + 1) + ' 面';
+    const turnWrap = document.createElement('span');
+    turnWrap.className = 'face-turn';
+    const lbl = document.createElement('span');
+    lbl.className = 'hint';
+    lbl.textContent = '打几回合';
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.min = '1';
+    inp.max = '9';
+    inp.value = String(f.turns);
+    const commit = (soft) => {
+      const v = Math.trunc(Number(inp.value));
+      if (!Number.isFinite(v) || v < 1 || v > 9) { if (!soft) inp.value = String(f.turns); return; }
+      f.turns = v;
+      syncFaces();
+    };
+    inp.oninput = () => commit(true);
+    inp.onchange = () => commit(false);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'mini';
+    del.textContent = '删掉这面';
+    del.disabled = faces.length <= 1;
+    del.onclick = () => {
+      if (faces.length <= 1) return;
+      const [gone] = faces.splice(wi, 1);
+      const last = faces[faces.length - 1];
+      if (last) last.turns += gone.turns; // 这一面的回合数还给最后一面，总数不变
+      paintFaces();
+      syncFaces();
+    };
+    turnWrap.append(lbl, inp, del);
+    head.append(name, turnWrap);
+
+    const grid = document.createElement('div');
+    grid.className = 'face-grid';
+    for (let n = 1; n <= 6; n++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'face-cell' + (f.enemies.has(n) ? ' on' : '');
+      b.textContent = String(n);
+      b.title = '敌人站在第 ' + n + ' 号位' + (n <= 3 ? '（第一排）' : '（第二排）');
+      b.onclick = () => {
+        if (f.enemies.has(n)) f.enemies.delete(n); else f.enemies.add(n);
+        b.classList.toggle('on', f.enemies.has(n));
+        syncFaces();
+      };
+      grid.appendChild(b);
+    }
+    wrap.append(head, grid);
+    box.appendChild(wrap);
+  });
+  $('addFace').disabled = faces.length >= 3;
+  const tc = Number(currentPlan && currentPlan.turnCount) || 0;
+  $('structNote').textContent = faces.length === 1 && tc > 1
+    ? '只有一面时，所有回合都算第 1 面；这一关有多面就点「+ 加一面」。'
+    : '';
+  updateFacesHint();
+}
+// 回合列表：按面分组，标题写「第 N 面 · 共 M 回合」，行里带第几回合 —— 跟着上面的每面回合数走
+function renderTurnList(plan, keepChecked) {
+  const box = $('turnList');
+  box.innerHTML = '';
+  const prev = keepChecked || {};
+  (plan.turns || []).forEach((t, i) => {
+    // 纯宝具的面没有指令卡，注入策略也没约束力 —— 不列出来（但保留真实序号）
+    if (t.pureNp) return;
+    const row = document.createElement('label');
+    row.className = 'turn-row';
+    row.dataset.i = String(i);
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = t.key;
+    cb.checked = Object.prototype.hasOwnProperty.call(prev, i) ? prev[i] : true;
+    const txt = document.createElement('span');
+    txt.className = 'turn-text';
+    txt.textContent = '第 ' + (t.turn + 1) + ' 回合　' + t.cards.map((c) => c.text).join(' + ');
+    row.appendChild(cb);
+    row.appendChild(txt);
+    box.appendChild(row);
+  });
+  // 分组标题插在每面的第一行前面（要在插入行之后计算，避免把标题当行）
+  const groups = new Map();
+  (plan.turns || []).forEach((t) => {
+    if (t.pureNp) return;
+    groups.set(t.round, (groups.get(t.round) || 0) + 1);
+  });
+  let lastRound = null;
+  Array.from(box.children).forEach((row) => {
+    const t = plan.turns[Number(row.dataset.i)];
+    if (!t || t.round === lastRound) return;
+    lastRound = t.round;
+    const head = document.createElement('div');
+    head.className = 'turn-group';
+    head.textContent = '第 ' + t.round + ' 面 · ' + groups.get(t.round) + ' 回合';
+    box.insertBefore(head, row);
+  });
+}
+function readChecked() {
+  const out = {};
+  Array.from($('turnList').querySelectorAll('.turn-row')).forEach((row) => {
+    const cb = row.querySelector('input');
+    if (cb) out[Number(row.dataset.i)] = cb.checked;
+  });
+  return out;
+}
+// 按 ns 重排回合归属：改标签、改 checkbox 的 key、顺手把精细设置的键搬到新键上
+function relabel(plan, ns) {
+  const keep = readChecked();
+  const pos = ns ? wavePositions(ns) : null;
+  const vals = plan.turns.map((t) => fineCfg[t.key] || null);
+  Object.keys(fineCfg).forEach((k) => delete fineCfg[k]);
+  plan.turns.forEach((t, i) => {
+    const p = (pos && pos[i]) || { round: t.round, turn: t.turn };
+    t.round = p.round;
+    t.turn = p.turn;
+    t.key = 'r' + p.round + 't' + p.turn;
+    if (vals[i]) fineCfg[t.key] = vals[i];
+  });
+  renderTurnList(plan, keep);
+  if ($('fineToggle').checked) renderFine();
+}
+
 /* 转换前先摊出每回合出的牌，勾选要注入出卡策略的回合（不做记忆，每次转换都问） */
 let confirmResolve = null;
 function askConfirm(plan) {
@@ -40,26 +256,26 @@ function askConfirm(plan) {
     confirmResolve = resolve;
     const box = $('turnList');
     box.innerHTML = '';
-    for (const t of plan.turns || []) {
-      const row = document.createElement('label');
-      row.className = 'turn-row';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = t.key;
-      const txt = document.createElement('span');
-      txt.className = 'turn-text';
-      txt.textContent = '第 ' + t.round + ' 面　' + t.cards.map((c) => c.text).join(' + ');
-      row.appendChild(cb);
-      row.appendChild(txt);
-      box.appendChild(row);
+    // 站位缺数据才进精细设置；只是回合数和面数对不上，就在主面板填
+    const needS = needSlots(plan);
+    const needT = needTurns(plan);
+    $('structRow').dataset.need = needS ? '1' : '0';
+    $('turnRow').dataset.need = needT ? '1' : '0';
+    if (needS || needT) {
+      initFaces(plan);
+      if (needS) paintFaces(); else paintTurnRow();
+      lastNs = faces.map((f) => f.turns).join(',');
+      relabel(plan, faces.map((f) => f.turns));
+    } else {
+      faces = [];
+      lastNs = '';
+      relabel(plan, null);
     }
     $('shuffleRow').style.display = plan.shuffle ? '' : 'none';
     $('shuffleInput').value = '0';
-    $('fineToggle').checked = false;
-    $('turnList').style.display = '';
-    $('fineBody').style.display = 'none';
+    $('fineToggle').checked = needS;
     $('fineBody').innerHTML = '';
-    $('fineHint').textContent = '关：按记录里那三张卡注入';
+    syncFineVisibility();
     $('confirmDialog').classList.add('show');
   });
 }
@@ -75,6 +291,28 @@ const turnLabel = (key) => {
 
 $('confirmOk').onclick = () => {
   const fineOn = $('fineToggle').checked;
+  let enemySlots = null;
+  let waveTurns = null;
+  const useSlots = fineOn && $('structRow').dataset.need === '1';
+  const useTurns = $('turnRow').dataset.need === '1';
+  if (useSlots || useTurns) {
+    if (useSlots && faces.some((f) => f.enemies.size === 0)) {
+      const empty = faces
+        .map((f, i) => (f.enemies.size === 0 ? '第 ' + (i + 1) + ' 面' : ''))
+        .filter(Boolean)
+        .join('、');
+      alert('还要点出敌人在哪几个位置（1–3 是第一排，4–6 是第二排）。\n现在空着的是：' + empty);
+      return;
+    }
+    const turnCount = Number(currentPlan && currentPlan.turnCount) || 0;
+    const sum = faces.reduce((a, f) => a + f.turns, 0);
+    if (sum !== turnCount) {
+      alert('每面「打几回合」加起来是 ' + sum + '，这条队伍记录的是 ' + turnCount + ' 回合，对不上。');
+      return;
+    }
+    waveTurns = faces.map((f) => f.turns);
+    if (useSlots) enemySlots = faces.map((f) => [...f.enemies].sort((a, b) => a - b));
+  }
   if (fineOn) {
     pruneFine();
     const errors = [];
@@ -92,12 +330,24 @@ $('confirmOk').onclick = () => {
   }
   closeConfirm({
     decide: true,
+    waveTurns,
+    enemySlots,
     injectTurns: fineOn
       ? Object.keys(fineCfg)
       : Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
     shuffleRetries: Math.max(0, parseInt($('shuffleInput').value, 10) || 0),
     fineStrategy: fineOn ? fineCfg : {},
   });
+};
+$('addFace').onclick = () => {
+  if (faces.length >= 3) return;
+  // 新的一面先占 1 回合，从最后一面里挪过来，总数保持对得上
+  const last = faces[faces.length - 1];
+  if (last && last.turns > 1) last.turns -= 1;
+  const slots = (currentPlan && currentPlan.waveSlots) || [];
+  faces.push({ enemies: new Set(slots[faces.length] || []), turns: 1 });
+  paintFaces();
+  syncFaces();
 };
 $('confirmCancel').onclick = () => closeConfirm(null);
 $('confirmDialog').addEventListener('click', (e) => { if (e.target.id === 'confirmDialog') closeConfirm(null); });
@@ -254,7 +504,7 @@ function renderFine() {
     const titleRow = document.createElement('div');
     titleRow.className = 'fine-turn-title';
     const b = document.createElement('b');
-    b.textContent = '第 ' + t.round + ' 面';
+    b.textContent = '第 ' + t.round + ' 面 · 第 ' + (t.turn + 1) + ' 回合';
     const rec = document.createElement('span');
     rec.textContent = '记录：' + t.cards.map((c) => c.text).join(' + ');
     titleRow.appendChild(b);
@@ -266,14 +516,26 @@ function renderFine() {
   }
 }
 
-$('fineToggle').onchange = () => {
+// 精细设置统一开关：回合勾选 / 关卡结构 / 按回合写牌序 都归它管
+function syncFineVisibility() {
   const on = $('fineToggle').checked;
+  const needS = $('structRow').dataset.need === '1';
+  const needT = $('turnRow').dataset.need === '1';
   $('turnList').style.display = on ? 'none' : '';
+  $('turnRow').style.display = needT ? '' : 'none';
+  $('structRow').style.display = on && needS ? '' : 'none';
   $('fineBody').style.display = on ? '' : 'none';
   $('fineHint').textContent = on
-    ? '开：自己写理想 / 禁忌牌序，没写牌序的回合不注入策略'
+    ? (needS
+        ? '开：先对一遍关卡结构，再按回合写牌序；没写牌序的回合不注入策略'
+        : '开：按回合写理想 / 禁忌牌序；没写牌序的回合不注入策略')
     : '关：按记录里那三张卡注入';
   if (on) renderFine();
+}
+
+
+$('fineToggle').onchange = () => {
+  syncFineVisibility();
 };
 
 // 提交前把全空的行收掉：一条牌序都没写的回合等于「不注入」
@@ -293,12 +555,13 @@ async function convertCall(url, body) {
   if (res.ok && res.needsConfirm) {
     const plan = res.plan || {};
     currentPlan = plan;
+    const needWave = faceNeeded(plan);
     // 纯宝具的面没有指令卡，注入策略也没约束力 —— 不列出来
-    const turns = (plan.turns || []).filter((t) => !t.pureNp);
-    if (!turns.length && !plan.shuffle) {
+    const realTurns = (plan.turns || []).filter((t) => !t.pureNp);
+    if (!realTurns.length && !plan.shuffle && !needWave) {
       return window.apiPost(url, { ...body, decide: true, injectTurns: [], shuffleRetries: 0 });
     }
-    const ans = await askConfirm({ turns, shuffle: plan.shuffle });
+    const ans = await askConfirm(plan);
     if (!ans) return { ok: false, cancelled: true };
     return window.apiPost(url, { ...body, ...ans });
   }

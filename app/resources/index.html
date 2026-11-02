@@ -80,11 +80,31 @@
   .turn-list { max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
   .turn-row { display:flex; align-items:center; gap:8px; padding:7px 10px; border-bottom:1px solid var(--line); cursor:pointer; font-size:12.5px; }
   .turn-row:last-child { border-bottom:0; }
+  .turn-group { padding:5px 10px; font-size:12px; color:var(--muted); background:#161c24; border-bottom:1px solid var(--line); }
+  .turn-group + .turn-row { border-top:0; }
   .turn-row:hover { background:#1a2028; }
   .turn-row input { width:auto; }
+  .face-turns { display:flex; flex-wrap:wrap; gap:10px; }
+  .face-turn-item { display:flex; align-items:center; gap:6px; font-size:12.5px; color:#cfd6e0; }
+  .face-turn-item input { width:54px; padding:3px 6px; text-align:center; }
+  .face { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-top:8px; background:#141a21; }
+  .face-head { display:flex; align-items:center; gap:8px; font-size:12.5px; }
+  .face-head > span:first-child { flex:1; color:#cfd6e0; }
+  .face-turn { display:flex; align-items:center; gap:6px; }
+  .face-turn input { width:52px; padding:3px 6px; text-align:center; }
+  .face-grid { display:grid; grid-template-columns:repeat(3, 64px); gap:6px; margin-top:8px; }
+  .face-cell {
+    padding:7px 0; border-radius:7px; border:1px solid var(--line); background:#1a2028;
+    color:#8b95a3; font-size:12.5px; cursor:pointer; transition:.12s;
+  }
+  .face-cell:hover { border-color:#3a4756; color:#cfd6e0; }
+  .face-cell.on { background:#12302b; border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .face-cell.on:hover { color:var(--accent); }
   .turn-text { white-space:nowrap; }
   /* 开关 */
-  .switch-row { display:flex; align-items:center; gap:12px; margin:2px 0 6px; }
+  .title-switch { display:flex; align-items:center; gap:12px; }
+  .title-switch .switch { margin-left:auto; font-weight:400; color:var(--muted); }
+  .title-switch .switch input:checked + span { color:var(--text); }
   .switch { display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; user-select:none; }
   .switch input { appearance:none; -webkit-appearance:none; width:36px; height:20px; border-radius:10px; background:#2c333c; position:relative; cursor:pointer; transition:background .15s; margin:0; }
   .switch input:checked { background:#2196f3; }
@@ -192,12 +212,25 @@
 </div>
 <div id="confirmDialog" class="modal">
   <div class="modal-box" style="width:560px">
-    <div class="modal-title">出卡策略</div>
-    <div class="switch-row">
+    <div class="modal-title title-switch">
+      <span>出卡策略</span>
       <label class="switch"><input type="checkbox" id="fineToggle"><span>精细设置</span></label>
-      <span class="hint" id="fineHint">关：按记录里那三张卡注入</span>
+    </div>
+    <div class="hint" id="fineHint" style="margin:-6px 0 10px">关：按记录里那三张卡注入</div>
+    <div id="turnRow" style="display:none;margin-bottom:12px">
+      <div class="hint" style="margin-bottom:4px">每面打几回合 <span id="turnHint"></span></div>
+      <div id="faceTurns" class="face-turns"></div>
     </div>
     <div id="turnList" class="turn-list"></div>
+    <div id="structRow" style="display:none;margin-top:10px">
+      <div class="row" style="align-items:center;gap:8px">
+        <span style="flex:1">关卡结构 <span class="hint" id="structHint"></span></span>
+        <button id="addFace" type="button" class="mini">+ 加一面</button>
+      </div>
+      <div class="hint" style="margin-top:2px">没查到这一关的缓存，敌人站在几号位只能由你点：1–3 是第一排，4–6 是第二排。面数和每面回合数也在这里定。</div>
+      <div id="faceList"></div>
+      <div class="hint" id="structNote" style="margin-top:4px"></div>
+    </div>
     <div id="fineBody" class="fine-body" style="display:none"></div>
     <div class="row" id="shuffleRow" style="align-items:center;gap:8px;margin-top:12px;display:none">
       <span class="hint" style="flex:1">洗牌最多再洗几次（0 = 洗一次就往下打）</span>
