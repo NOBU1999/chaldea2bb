@@ -87,6 +87,11 @@
   .face-turns { display:flex; flex-wrap:wrap; gap:10px; }
   .face-turn-item { display:flex; align-items:center; gap:6px; font-size:12.5px; color:#cfd6e0; }
   .face-turn-item input { width:54px; padding:3px 6px; text-align:center; }
+.tag-list { display:flex; flex-direction:column; gap:6px; }
+.tag-item { display:grid; grid-template-columns:1fr auto; align-items:center; gap:2px 8px; font-size:12.5px; }
+.tag-label { grid-column:1; color:#cfd6e0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tag-item select { grid-column:2; width:190px; padding:3px 6px; }
+.tag-tip { grid-column:1 / -1; margin:0; }
   .face { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-top:8px; background:#141a21; }
   .face-head { display:flex; align-items:center; gap:8px; font-size:12.5px; }
   .face-head > span:first-child { flex:1; color:#cfd6e0; }
@@ -222,6 +227,10 @@
       <div id="faceTurns" class="face-turns"></div>
     </div>
     <div id="turnList" class="turn-list"></div>
+    <div id="tagRow" style="display:none;margin-top:12px">
+      <div class="hint" style="margin:0 0 4px">指令纹章 · 把 BB 里做好的标签绑到具体的卡（设一次，所有回合沿用；不指定就按普通卡出）</div>
+      <div id="tagList" class="tag-list"></div>
+    </div>
     <div id="structRow" style="display:none;margin-top:10px">
       <div class="row" style="align-items:center;gap:8px">
         <span style="flex:1">关卡结构 <span class="hint" id="structHint"></span></span>

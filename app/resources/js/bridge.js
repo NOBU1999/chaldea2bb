@@ -2,7 +2,7 @@
 // bridge.js — 同一套界面，两种后端：
 //   浏览器里（node server.mjs）走 fetch('/api/...')；独立窗口里（Neutralino）直接调文件 API。
 // app.js 只认 apiPost/apiGet，不关心跑在哪。
-import { createContext, convertTeam, describeTurns, inferWaveTurns, needsShuffle, checkFineConfig } from './convert.js';
+import { createContext, convertTeam, describeTurns, describeCardTags, inferWaveTurns, needsShuffle, checkFineConfig } from './convert.js';
 import { fromUrl } from './link.js';
 
 // 只有真正跑在 Neutralino 窗口里才算（浏览器里也会加载 neutralino.js，但没有 NL_TOKEN）
@@ -75,18 +75,26 @@ async function findIn(dir, name) {
   }
   return null;
 }
-// 礼装的中日文名对照表在 mappingData.1/2/3 的某一份里，按内容找，不写死文件名
-async function loadMcNames(gameDir) {
+// 中日文名对照表在 mappingData.1/2/3 的某一份里，按内容找，不写死文件名。
+// 一次读回两张：mc_names（御主礼装）、cc_names（指令纹章）
+const nameMapsCache = new Map();
+async function loadNameMaps(gameDir) {
+  const hit = nameMapsCache.get(gameDir);
+  if (hit) return hit;
+  const out = { mc: null, cc: null };
   for (const e of await listDir(gameDir)) {
     if (e.dir || !/^mappingData\..*\.json$/i.test(e.name)) continue;
     try {
       const text = await FS().readFile(e.path);
-      if (text.indexOf('"mc_names"') < 0) continue;
+      if (text.indexOf('"mc_names"') < 0 && text.indexOf('"cc_names"') < 0) continue;
       const m = JSON.parse(text);
-      if (m && m.mc_names) return m.mc_names;
+      if (m && m.mc_names && !out.mc) out.mc = m.mc_names;
+      if (m && m.cc_names && !out.cc) out.cc = m.cc_names;
+      if (out.mc && out.cc) break;
     } catch {}
   }
-  return null;
+  nameMapsCache.set(gameDir, out);
+  return out;
 }
 
 // 输出目录：设置里选过就用它，否则用程序目录下的 output
@@ -105,7 +113,7 @@ async function getCtx() {
   const data = {
     servantInfo: await readJson(p.bb + '/servant_info_CH.json'),
     masterInfo: masterInfoPath ? await readJson(masterInfoPath) : null,
-    mcNames: await loadMcNames(game),
+    mcNames: (await loadNameMaps(game)).mc,
     baseFunctions: await readJson(game + '/baseFunctions.json'),
     baseSkills: await readJson(game + '/baseSkills.json'),
     baseTds: await readJson(game + '/baseTds.json'),
@@ -162,13 +170,57 @@ async function findQuest(questId) {
   questCache.set(questId, null);
   return null;
 }
+// 纹章表：Chaldea 的 commandCodes.json（日文名）+ mappingData 的 cc_names（中文名）
+const BS = String.fromCharCode(92);
+function baseName(p) {
+  const s = String(p || '');
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf(BS));
+  const b = s.slice(i + 1);
+  return b.toLowerCase().endsWith('.png') ? b.slice(0, -4) : b;
+}
+let ccCache = null;
+async function getCcInfo() {
+  if (ccCache) return ccCache;
+  const p = await paths();
+  const arr = await readJson(p.ch + '/userdata/game/commandCodes.json');
+  const maps = await loadNameMaps(p.ch + '/userdata/game');
+  const map = {};
+  for (const c of arr || []) {
+    if (!c || c.id == null) continue;
+    map[c.id] = { jp: String(c.name || ''), cn: String((maps.cc && maps.cc[c.name] && maps.cc[c.name].CN) || '') };
+  }
+  ccCache = map;
+  return map;
+}
+
+// BB 里已经做好的「自定义指令卡（纹章）」标签：UIsettings.json 的 specialKeys，列表顺序就是 S 序号。
+// 每次调用都重读（文件很小）：在 BB 里刚做好一枚标签，回到这里再转换就应该能看到，不必重启
+async function getSpecialKeys() {
+  const p = await paths();
+  const file = await findIn(p.bb, 'UIsettings.json');
+  const ui = file ? await readJson(file) : null;
+  const raw = Array.isArray(ui && ui.specialKeys) ? ui.specialKeys : [];
+  const keys = [];
+  for (let i = 0; i < raw.length; i++) {
+    const k = Array.isArray(raw[i]) ? raw[i] : [];
+    const path = String(k[0] || '');
+    const base = String(k[1] || '');
+    keys.push({ i, path, base, name: baseName(path), exists: path ? await fileExists(path) : false });
+  }
+  return { keys, raw: raw.map((k) => (Array.isArray(k) ? [k[0], k[1]] : k)) };
+}
+
 async function buildPlan(team) {
   const quest = await findQuest(team?.quest?.id);
   const waves = (await getCtx()).waveSlotsOf(quest);
   const waveCount = waves?.length ?? 0;
   const turnCount = (team?.actions || []).filter((a) => a.type === 'attack').length;
   const suggest = inferWaveTurns(team, waves || null);
+  // 纹章标签：BB 里已做好的键（按列表顺序 = S 序号）+ 本队打过的实体卡（带纹章名）
+  const sk = await getSpecialKeys();
+  const tagCards = describeCardTags(team, await getCcInfo());
   return {
+    tags: { keys: sk.keys, cards: tagCards },
     turns: describeTurns(team, waveCount, suggest),
     waveTurnsSuggest: suggest,
     turnCount,
@@ -181,6 +233,9 @@ async function buildPlan(team) {
 
 async function doConvert(team, body) {
   if (!body.decide) return { ok: true, needsConfirm: true, plan: await buildPlan(team) };
+  // 界面里选的「实体卡 -> 标签序号」；没有选就不读 BB 的标签表
+  const cardKeys = body.cardKeys && typeof body.cardKeys === 'object' ? body.cardKeys : null;
+  const bbSpecialKeys = cardKeys ? (await getSpecialKeys()).raw : null;
   const overrides = {
     ...(await settingsGet()),
     injectTurns: body.injectTurns || [],
@@ -188,6 +243,8 @@ async function doConvert(team, body) {
     __waveSlots: Array.isArray(body.enemySlots) && body.enemySlots.length ? body.enemySlots : null,
     shuffleRetries: Math.max(0, Number(body.shuffleRetries) || 0),
     fineStrategy: body.fineStrategy || null,
+    cardKeys,
+    bbSpecialKeys,
   };
   overrides.__quest = await findQuest(team?.quest?.id);
   const { json, warnings, meta } = convertTeam(team, await getCtx(), overrides);
@@ -346,7 +403,16 @@ async function call(method, url, body) {
   try { return await h(body || {}); } catch (e) { return { ok: false, error: String(e && e.message ? e.message : e) }; }
 }
 
-window.apiPost = (url, body) => (NL ? call('POST', url, body) : post(url, body));
+// 浏览器模式下要有自己的 fetch 包装：不能叫 post（会和 app.js 的同名全局函数串成递归）
+async function postJson(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  return r.json();
+}
+window.apiPost = (url, body) => (NL ? call('POST', url, body) : postJson(url, body));
 window.apiGet = (url) => (NL ? call('GET', url) : fetch(url).then((r) => r.json()));
 window.apiMode = NL ? 'app' : 'browser';
 // 界面上提交精细策略前先自检（规则和生成时共用一份）

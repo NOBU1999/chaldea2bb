@@ -8,6 +8,9 @@ const ALLY_TARGET_TYPES = new Set(['ptOne', 'ptOneOther']);
 // 指令卡代号：位次(1-3) + 卡色字母；BB 与 Chaldea 的 cardType 1/2/3 = A/B/Q
 const CARD_LETTER = { 1: 'A', 2: 'B', 3: 'Q' };
 const cardCode = (atk) => String(atk.svt + 1) + (CARD_LETTER[atk.cardType] ?? 'B');
+// 自定义指令卡（纹章）标签：BB 把「1B + 纹章」记成 1BS0，S 后面的序号是脚本 specialKeys 里的下标（0 基）。
+// cardKeys = { '0:3': 0 } —— 键是「从者下标:卡序号（0 基）」，值是 specialKeys 下标。
+const cardKeyId = (atk) => atk.svt + ':' + atk.card;
 
 // 本工具验证过的 Chaldea 存档构建号上限（队伍里的 appBuild）。更高的版本只标「未验证」，不算失败。
 export const MAX_VERIFIED_BUILD = 992;
@@ -392,6 +395,37 @@ export function describeTurns(team, waveCount = 0, waveTurns = null) {
   return list;
 }
 
+// 列出这条队伍「打过的实体卡」：位次、第几张、卡色、纹章名。界面拿它做「实体卡 → 标签」的对应表。
+// ccInfo: 纹章 id -> { jp, cn }（Chaldea 的 commandCodes.json 与 mappingData 的 cc_names）
+export function describeCardTags(team, ccInfo) {
+  const members = team?.team?.onFieldSvts || [];
+  const seen = new Map();
+  for (const a of team?.actions || []) {
+    if (a.type !== 'attack') continue;
+    for (const atk of a.attacks || []) {
+      if (atk.isTD || !Number.isInteger(atk.card) || atk.card < 0) continue;
+      const key = atk.svt + ':' + atk.card;
+      if (seen.has(key)) continue;
+      const ids = (members[atk.svt] && members[atk.svt].commandCodeIds) || [];
+      const ccId = Number.isInteger(ids[atk.card]) ? ids[atk.card] : null;
+      const info = ccId == null ? null : (ccInfo && ccInfo[ccId]) || null;
+      seen.set(key, {
+        key, svt: atk.svt, card: atk.card, slot: atk.svt + 1, nth: atk.card + 1,
+        token: cardCode(atk), ccId,
+        ccName: info ? (info.cn || info.jp || null) : null,
+      });
+    }
+  }
+  const list = [...seen.values()].sort((a, b) => a.svt - b.svt || a.card - b.card);
+  // 同一从者、同一卡色的另一张实体卡：只做一枚标签时，另一张没法精确指定（BB 的卡项只能锁定，不能排除）
+  for (const c of list) {
+    const sibs = list.filter((o) => o !== c && o.svt === c.svt && o.token === c.token);
+    c.sameColor = sibs.map((o) => o.nth);
+    c.noTagSiblings = sibs.filter((o) => o.ccId == null).map((o) => o.nth);
+  }
+  return list;
+}
+
 // overrides.__quest = 已解析的关卡对象（可选，用来算敌方站位）；其余字段是设置项
 // overrides.__waveSlots = 直接给每波敌方站位（可选，优先于 __quest）
 export function convertTeam(team, ctx, overrides = {}) {
@@ -410,6 +444,16 @@ export function convertTeam(team, ctx, overrides = {}) {
 
   // waveSlots 由调用方查好传进来（哪一关卡的缓存是它的 IO 事）
   const waveSlots = overrides?.__waveSlots ?? ctx.waveSlotsOf(overrides?.__quest);
+  // 实体卡 -> 纹章标签下标（界面里选的）。只作用于记录推出来的那条策略，精细策略不受影响。
+  const cardKeys = overrides?.cardKeys || null;
+  const usedKeys = new Set();
+  const cardToken = (atk) => {
+    const base = cardCode(atk);
+    const s = cardKeys ? cardKeys[cardKeyId(atk)] : undefined;
+    if (!Number.isInteger(s) || s < 0) return base;
+    usedKeys.add(s);
+    return base + 'S' + s;
+  };
   // 有些从者在 BB 里要「按名字调用」：第三个参数是这个技能弹出的选项值。
   // idx = 第几个技能（0 基）；idx 为 null 表示该从者所有技能都用名字写。opts 是值的完整取值范围。
   const NAMED_SVTS = {
@@ -648,7 +692,7 @@ export function convertTeam(team, ctx, overrides = {}) {
       // 出卡策略 —— 把这一回合记录的三张卡原样写成 strategy（BB 自带脚本里常见这个字段）
       const cardOf = (atk) => atk.isTD
         ? { type: 0, cards: [atk.svt + 1], criticalStar: 0, more_or_less: true }
-        : { type: 1, cards: [cardCode(atk)], criticalStar: 0, more_or_less: true };
+        : { type: 1, cards: [cardToken(atk)], criticalStar: 0, more_or_less: true };
       const slots = (a.attacks || []).map(cardOf);
       while (slots.length < 3) slots.push({ type: 2, cards: [], criticalStar: 0, more_or_less: true });
       // 整面只有宝具（没有指令卡）时不写策略：写出来也只是「宝具 + 缺省 + 缺省」，没有约束力
@@ -708,6 +752,10 @@ export function convertTeam(team, ctx, overrides = {}) {
       out['round' + r + '_turn' + k + '_condition'] = t.condition ?? null;
     });
   });
+
+  // S 序号就是 specialKeys 的下标，所以整表原样带过去（不能只挑用到的重排，否则序号全错位）；
+  // 一回合都没用到标签时保持空数组，脚本里不留没用的键
+  if (usedKeys.size && Array.isArray(overrides?.bbSpecialKeys)) out.specialKeys = overrides.bbSpecialKeys;
 
   const APPLY = [
     'onlyFriendAssist','fullEquip','NPlevel','servantLevel','skillsLevel','assistMode','assistIdx','assistEquip','assistTags',

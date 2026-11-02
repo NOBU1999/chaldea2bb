@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createContext, convertTeam, needsShuffle, describeTurns } from './app/resources/js/convert.js';
+import { createContext, convertTeam, describeTurns, describeCardTags, needsShuffle } from './app/resources/js/convert.js';
 import { loadContextData, findQuest } from './src/node-data.mjs';
 import { fromUrl } from './app/resources/js/link.js';
 import crypto from 'node:crypto';
@@ -56,6 +56,49 @@ const getCtx = () => {
   if (miss.length) throw new Error('还没设置 ' + miss.join(' 和 ') + '：请在「脚本设置 → 路径」里填写，或设置环境变量 BB_ROOT / CHALDEA_HOME');
   return (ctxCache ??= createContext(loadContextData({ bbRoot: p.bb, chaldeaHome: p.ch })));
 };
+
+// 纹章标签：BB 的 UIsettings.json（列表顺序即 S 序号）+ 纹章名表（Chaldea 的 commandCodes 与 cc_names）
+let ccCache = null;
+function specialKeysNow() {
+  const p = pathCfg();
+  let raw = [];
+  if (p.bb) {
+    for (const f of [path.join(p.bb, 'UIsettings.json'), path.join(path.dirname(p.bb), 'UIsettings.json')]) {
+      if (!fs.existsSync(f)) continue;
+      try { raw = JSON.parse(fs.readFileSync(f, 'utf8')).specialKeys || []; } catch {}
+      break;
+    }
+  }
+  const keys = raw.map((k, i) => {
+    const file = String((Array.isArray(k) && k[0]) || '');
+    const base = String((Array.isArray(k) && k[1]) || '');
+    return { i, path: file, base, name: path.basename(file).replace(/\.png$/i, ''), exists: !!file && fs.existsSync(file) };
+  });
+  return { keys, raw: raw.map((k) => (Array.isArray(k) ? [k[0], k[1]] : k)) };
+}
+function ccTable() {
+  if (ccCache) return ccCache;
+  const p = pathCfg();
+  const cc = {};
+  try {
+    const game = path.join(p.ch || '', 'userdata/game');
+    const arr = JSON.parse(fs.readFileSync(path.join(game, 'commandCodes.json'), 'utf8'));
+    let names = null;
+    for (const f of fs.readdirSync(game)) {
+      if (!/^mappingData\..*\.json$/i.test(f)) continue;
+      const txt = fs.readFileSync(path.join(game, f), 'utf8');
+      if (txt.indexOf('"cc_names"') < 0) continue;
+      names = JSON.parse(txt).cc_names || null;
+      if (names) break;
+    }
+    for (const c of arr || []) {
+      if (!c || c.id == null) continue;
+      cc[c.id] = { jp: String(c.name || ''), cn: String((names && names[c.name] && names[c.name].CN) || '') };
+    }
+  } catch {}
+  ccCache = cc;
+  return cc;
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -169,7 +212,9 @@ async function handle(req, res) {
   // 转换前先把「每回合出什么牌」摊出来让用户勾：勾中的回合才注入出卡策略。不做记忆，每次转换都问。
   function buildPlan(team) {
     const waves = getCtx().waveSlotsOf(findQuest(pathCfg().ch || null, team?.quest?.id));
+    const keys = specialKeysNow().keys;
     return {
+      tags: { keys, cards: describeCardTags(team, ccTable()) },
       turns: describeTurns(team, waves?.length ?? 0),
       shuffle: needsShuffle(team) ? { needed: true } : null,
     };
@@ -186,6 +231,8 @@ async function handle(req, res) {
     overrides.injectTurns = Array.isArray(body.injectTurns) ? body.injectTurns : [];
     overrides.shuffleRetries = Math.max(0, Number(body.shuffleRetries) || 0);
     overrides.fineStrategy = body.fineStrategy || null;
+    overrides.cardKeys = body.cardKeys && typeof body.cardKeys === 'object' ? body.cardKeys : null;
+    overrides.bbSpecialKeys = overrides.cardKeys ? specialKeysNow().raw : null;
     overrides.__quest = findQuest(pathCfg().ch, team?.quest?.id);
     const { json, warnings, meta } = convertTeam(team, getCtx(), overrides);
     const name = safeName(team.team?.name || ('team' + index));
@@ -312,6 +359,8 @@ async function handle(req, res) {
     overrides.injectTurns = Array.isArray(body.injectTurns) ? body.injectTurns : [];
     overrides.shuffleRetries = Math.max(0, Number(body.shuffleRetries) || 0);
     overrides.fineStrategy = body.fineStrategy || null;
+    overrides.cardKeys = body.cardKeys && typeof body.cardKeys === 'object' ? body.cardKeys : null;
+    overrides.bbSpecialKeys = overrides.cardKeys ? specialKeysNow().raw : null;
     overrides.__quest = findQuest(pathCfg().ch, team?.quest?.id);
     const { json, warnings, meta } = convertTeam(team, getCtx(), overrides);
     const dir = outDirPath();

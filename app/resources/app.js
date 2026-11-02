@@ -249,6 +249,53 @@ function relabel(plan, ns) {
   if ($('fineToggle').checked) renderFine();
 }
 
+/* 指令纹章：把 BB 里做好的标签绑到「哪位从者的第几张卡」上（一次设定，套用到所有回合） */
+function renderTags(plan) {
+  const box = $('tagList');
+  const row = $('tagRow');
+  if (!box || !row) return;
+  try { buildTagRows(plan, box, row); } catch (e) { row.style.display = 'none'; }
+}
+function buildTagRows(plan, box, row) {
+  box.innerHTML = '';
+  const keys = ((plan && plan.tags && plan.tags.keys) || []).filter((k) => k.exists && k.base);
+  const cards = ((plan && plan.tags && plan.tags.cards) || []).filter((c) => c.ccId != null);
+  // 只看记录：这张卡带纹章就列出来。BB 里有没有对应标签不影响是否显示 —— 没有就是只有「不指定」
+  row.style.display = cards.length ? '' : 'none';
+  if (!cards.length) return;
+  let anyOption = false;
+  for (const c of cards) {
+    const item = document.createElement('div');
+    item.className = 'tag-item';
+    const label = document.createElement('span');
+    label.className = 'tag-label';
+    label.textContent = '位 ' + c.slot + ' · 第 ' + c.nth + ' 张 · ' + c.token + ' · ' + (c.ccName || '纹章');
+    const sel = document.createElement('select');
+    sel.dataset.key = c.key;
+    sel.appendChild(new Option('不指定', ''));
+    for (const k of keys) {
+      if (k.base !== c.token) continue;
+      anyOption = true;
+      sel.appendChild(new Option('S' + k.i + '　' + k.name, String(k.i)));
+    }
+    item.appendChild(label);
+    item.appendChild(sel);
+    if (c.noTagSiblings && c.noTagSiblings.length) {
+      const tip = document.createElement('span');
+      tip.className = 'hint tag-tip';
+      tip.textContent = '同色的第 ' + c.noTagSiblings.join('、') + ' 张没有标签，那一张无法精确指定';
+      item.appendChild(tip);
+    }
+    box.appendChild(item);
+  }
+  if (!anyOption) {
+    const tip = document.createElement('div');
+    tip.className = 'hint';
+    tip.textContent = 'BB 里还没有本队能用的标签（不影响转换：这些卡按普通指令卡出）';
+    box.appendChild(tip);
+  }
+}
+
 /* 转换前先摊出每回合出的牌，勾选要注入出卡策略的回合（不做记忆，每次转换都问） */
 let confirmResolve = null;
 function askConfirm(plan) {
@@ -272,6 +319,7 @@ function askConfirm(plan) {
       relabel(plan, null);
     }
     $('shuffleRow').style.display = plan.shuffle ? '' : 'none';
+    renderTags(plan);
     $('shuffleInput').value = '0';
     $('fineToggle').checked = needS;
     $('fineBody').innerHTML = '';
@@ -328,8 +376,13 @@ $('confirmOk').onclick = () => {
     }
     if (warns.length) alert('这些地方能生成，但请留意：\n\n' + warns.join('\n'));
   }
+  const cardKeys = {};
+  document.querySelectorAll('#tagList select').forEach((el) => {
+    if (el.value !== '') cardKeys[el.dataset.key] = Number(el.value);
+  });
   closeConfirm({
     decide: true,
+    cardKeys,
     waveTurns,
     enemySlots,
     injectTurns: fineOn
