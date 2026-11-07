@@ -726,7 +726,7 @@ const DEFAULT_SETTINGS = {
   chaldeaHome: '', bbRoot: '',
   onlyFriendAssist: 0, fullEquip: 1, NPlevel: 1, servantLevel: 1,
   skillsLevel: [10, 10, 10, 0, 0, 0, 0, 0],
-  assistMode: '从者礼装', assistIdx: 2, server: 'CH',
+  assistMode: '从者礼装', assistIdx: '', server: 'CH',
   clearAP: 1, allowOtherApple: 0, fullFriendshipStop: 1, gameCrushRestart: 0,
   allNotSkip: 1, noGrandRefresh: 1, ignoreFriendship: '', addFriend: 0,
   noChain: 0, stuckRestart: 0, checkStuckInterval: 30, firstBattleSet: 1,
@@ -825,6 +825,7 @@ function makeControl(key, type, options, value) {
     ctrl = document.createElement('input');
     ctrl.value = Array.isArray(value) ? value.join(',') : String(value ?? '');
     if (type === 'num') { ctrl.type = 'number'; ctrl.step = 'any'; }
+    if (key === 'assistIdx') { ctrl.min = '1'; ctrl.max = '6'; ctrl.placeholder = '空 = 自动'; }
     if (key === 'skillsLevel') ctrl.classList.add('wide');
     if (key === 'ignoreFriendship') ctrl.placeholder = '空 = 不忽略';
     if (key === 'chaldeaHome') { ctrl.placeholder = '例如 D:/Chaldea'; ctrl.classList.add('wide'); }
@@ -914,7 +915,9 @@ function buildSettings(settings = {}) {
       const span = document.createElement('span');
       span.textContent = label;
       field.appendChild(span);
-      const value = settings[key] !== undefined && settings[key] !== null ? settings[key] : DEFAULT_SETTINGS[key];
+      let value = settings[key] !== undefined && settings[key] !== null ? settings[key] : DEFAULT_SETTINGS[key];
+      // 助战位次界面用「第几位」（1–6），脚本里是 0 基，显示时 +1
+      if (key === 'assistIdx' && Number.isInteger(value)) value += 1;
       field.appendChild(makeControl(key, type, options, value));
       grid.appendChild(field);
     }
@@ -938,6 +941,8 @@ function collectSettings() {
     const v = el.value;
     if (v === '' && el.dataset.key !== 'outputDir') return;
     const type = el.dataset.type;
+    // 助战位次：界面填的是「第几位」（1–6），落盘转回 BB 的 0 基
+    if (el.dataset.key === 'assistIdx') { settings[el.dataset.key] = Number(v) - 1; return; }
     if (type === 'num' || type === 'bool') settings[el.dataset.key] = Number(v);
     else if (type === 'list') settings[el.dataset.key] = v.split(',').map(x => Number(x.trim())).filter(n => !Number.isNaN(n));
     else if (el.dataset.key === 'skillsLevel') settings[el.dataset.key] = v.split(',').map(x => Number(x.trim())).filter(n => !Number.isNaN(n));
