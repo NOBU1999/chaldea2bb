@@ -385,8 +385,9 @@ $('confirmOk').onclick = () => {
     cardKeys,
     waveTurns,
     enemySlots,
-    // 勾选的回合都注入：写了精细牌序的用精细的，没写的回退到记录里那三张卡
-    injectTurns: Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
+    injectTurns: fineOn
+      ? Object.keys(fineCfg)
+      : Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
     shuffleRetries: Math.max(0, parseInt($('shuffleInput').value, 10) || 0),
     fineStrategy: fineOn ? fineCfg : {},
   });
@@ -579,8 +580,8 @@ function syncFineVisibility() {
   $('fineBody').style.display = on ? '' : 'none';
   $('fineHint').textContent = on
     ? (needS
-        ? '开：先对一遍关卡结构，再按回合写牌序；没写牌序的回合按记录里那三张卡'
-        : '开：按回合写理想 / 禁忌牌序；没写牌序的回合按记录里那三张卡')
+        ? '开：先对一遍关卡结构，再按回合写牌序；没写牌序的回合不注入策略'
+        : '开：按回合写理想 / 禁忌牌序；没写牌序的回合不注入策略')
     : '关：按记录里那三张卡注入';
   if (on) renderFine();
 }
