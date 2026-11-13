@@ -385,9 +385,8 @@ $('confirmOk').onclick = () => {
     cardKeys,
     waveTurns,
     enemySlots,
-    injectTurns: fineOn
-      ? Object.keys(fineCfg)
-      : Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
+    // 勾选的回合都注入：写了精细牌序的用精细的，没写的回退到记录里那三张卡
+    injectTurns: Array.from(document.querySelectorAll('#turnList input:checked')).map((i) => i.value),
     shuffleRetries: Math.max(0, parseInt($('shuffleInput').value, 10) || 0),
     fineStrategy: fineOn ? fineCfg : {},
   });
@@ -580,8 +579,8 @@ function syncFineVisibility() {
   $('fineBody').style.display = on ? '' : 'none';
   $('fineHint').textContent = on
     ? (needS
-        ? '开：先对一遍关卡结构，再按回合写牌序；没写牌序的回合不注入策略'
-        : '开：按回合写理想 / 禁忌牌序；没写牌序的回合不注入策略')
+        ? '开：先对一遍关卡结构，再按回合写牌序；没写牌序的回合按记录里那三张卡'
+        : '开：按回合写理想 / 禁忌牌序；没写牌序的回合按记录里那三张卡')
     : '关：按记录里那三张卡注入';
   if (on) renderFine();
 }
@@ -602,23 +601,26 @@ function pruneFine() {
   }
 }
 
-async function convertCall(url, body) {
+async function convertCall(url, body, defaultName, nameKey = 'name') {
   fineCfg = {};
   const res = await window.apiPost(url, body);
-  if (res.ok && res.needsConfirm) {
-    const plan = res.plan || {};
-    currentPlan = plan;
-    const needWave = faceNeeded(plan);
-    // 纯宝具的面没有指令卡，注入策略也没约束力 —— 不列出来
-    const realTurns = (plan.turns || []).filter((t) => !t.pureNp);
-    if (!realTurns.length && !plan.shuffle && !needWave) {
-      return window.apiPost(url, { ...body, decide: true, injectTurns: [], shuffleRetries: 0 });
-    }
-    const ans = await askConfirm(plan);
+  if (!(res.ok && res.needsConfirm)) return res;
+  const plan = res.plan || {};
+  currentPlan = plan;
+  const needWave = faceNeeded(plan);
+  // 纯宝具的面没有指令卡，注入策略也没约束力 —— 不列出来
+  const realTurns = (plan.turns || []).filter((t) => !t.pureNp);
+  let ans;
+  if (!realTurns.length && !plan.shuffle && !needWave) {
+    ans = { decide: true, injectTurns: [], shuffleRetries: 0 };
+  } else {
+    ans = await askConfirm(plan);
     if (!ans) return { ok: false, cancelled: true };
-    return window.apiPost(url, { ...body, ...ans });
   }
-  return res;
+  // 转换前问一次文件名（取消 = 不转换）；留空则用默认名
+  const name = await askName(defaultName);
+  if (name === null) return { ok: false, cancelled: true };
+  return window.apiPost(url, { ...body, ...ans, [nameKey]: name });
 }
 /* 链接 */
 let pendingUrl = '';
@@ -631,30 +633,44 @@ $('linkBtn').onclick = async () => {
   $('linkBtn').disabled = false;
   if (!r.ok) { alert(r.error || '解析失败'); return; }
   pendingUrl = url;
-  $('nameInput').value = r.defaultName || '';
-  $('nameDialog').classList.add('show');
-  $('nameInput').focus();
-  $('nameInput').select();
-};
-
-function closeDialog() { $('nameDialog').classList.remove('show'); }
-$('nameCancel').onclick = closeDialog;
-$('nameDialog').addEventListener('click', (e) => { if (e.target.id === 'nameDialog') closeDialog(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDialog(); });
-
-$('nameOk').onclick = async () => {
-  $('nameOk').disabled = true;
-  const r = await post('/api/link/save', { url: pendingUrl, name: $('nameInput').value.trim() });
-  $('nameOk').disabled = false;
-  if (!r.ok) { alert(r.error || '保存失败'); return; }
-  closeDialog();
+  const name = await askName(r.defaultName);
+  if (name === null) return;
+  const saved = await post('/api/link/save', { url: pendingUrl, name });
+  if (!saved.ok) { alert(saved.error || '保存失败'); return; }
   $('result').classList.add('show');
-  $('rawPath').textContent = r.rawPath;
+  $('rawPath').textContent = saved.rawPath;
   $('outPath').textContent = '—';
   $('warnings').innerHTML = '';
   $('json').textContent = '';
   loadRaw();
 };
+
+// 命名对话框：转换前问一次文件名，链接保存也复用它。取消返回 null，留空返回 ''
+let nameResolve = null;
+function askName(def) {
+  return new Promise((resolve) => {
+    nameResolve = resolve;
+    $('nameInput').value = def || '';
+    $('nameDialog').classList.add('show');
+    $('nameInput').focus();
+    $('nameInput').select();
+  });
+}
+function closeName(v) {
+  $('nameDialog').classList.remove('show');
+  const r = nameResolve;
+  nameResolve = null;
+  if (r) r(v);
+}
+function closeDialog() { closeName(null); }
+$('nameCancel').onclick = () => closeName(null);
+$('nameDialog').addEventListener('click', (e) => { if (e.target.id === 'nameDialog') closeName(null); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeName(null); });
+
+$('nameOk').onclick = () => closeName($('nameInput').value.trim());
+$('nameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); closeName($('nameInput').value.trim()); }
+});
 
 /* 文件夹 */
 /* 打开输出文件夹 */
@@ -683,7 +699,7 @@ async function loadTeams() {
   for (const f of r.files) {
     for (const t of f.teams) {
       const el = item(t.name, '关卡 ' + (t.quest?.id ?? '?') + ' · ' + t.actions + ' 条', async () => {
-        const res = await convertCall('/api/convert', { file: f.file, index: t.index });
+        const res = await convertCall('/api/convert', { file: f.file, index: t.index }, t.name === '(未命名)' ? '' : t.name);
         if (!res.ok) return alert(res.error || '转换失败');
         showResult(res);
       });
@@ -709,7 +725,7 @@ async function loadRaw() {
   if (!r.files?.length) { box.innerHTML = '<div class="empty">—</div>'; return; }
   for (const f of r.files) {
     const el = item(f.name.replace(/\.json$/, ''), (f.size / 1024).toFixed(1) + ' KB', async () => {
-      const res = await convertCall('/api/convert-raw', { name: f.name });
+      const res = await convertCall('/api/convert-raw', { name: f.name }, f.name.replace(/\.json$/i, ''), 'saveName');
       if (!res.ok) return alert(res.error || '转换失败');
       showResult(res);
     });

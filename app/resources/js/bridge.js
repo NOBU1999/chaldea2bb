@@ -291,7 +291,7 @@ const handlers = {
     if (!team) return { ok: false, error: '这个文件里没有这条队伍' };
     const r = await doConvert(team, body);
     if (r.needsConfirm) return r;
-    const name = safeName(team.team?.name || ('team' + body.index));
+    const name = safeName(body.name || team.team?.name || ('team' + body.index));
     const dir = await OUT_DIR();
     await ensureDir(dir);
     const outPath = dir + '/' + name + '.json';
@@ -306,7 +306,8 @@ const handlers = {
     if (r.needsConfirm) return r;
     const dir = await OUT_DIR();
     await ensureDir(dir);
-    const outPath = dir + '/' + body.name;
+    const want = String(body.saveName || '').trim();
+    const outPath = dir + '/' + (want ? safeName(want.replace(/\.json$/i, '')) + '.json' : body.name);
     await FS().writeFile(outPath, JSON.stringify(r.json, null, 4));
     return { ok: true, outPath: outPath, absPath: outPath, warnings: r.warnings, meta: r.meta, json: r.json };
   },

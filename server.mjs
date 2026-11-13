@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createContext, convertTeam, describeTurns, describeCardTags, needsShuffle } from './app/resources/js/convert.js';
+import { createContext, convertTeam, describeTurns, describeCardTags, inferWaveTurns, needsShuffle } from './app/resources/js/convert.js';
 import { loadContextData, findQuest } from './src/node-data.mjs';
 import { fromUrl } from './app/resources/js/link.js';
 import crypto from 'node:crypto';
@@ -211,11 +211,19 @@ async function handle(req, res) {
 
   // 转换前先把「每回合出什么牌」摊出来让用户勾：勾中的回合才注入出卡策略。不做记忆，每次转换都问。
   function buildPlan(team) {
-    const waves = getCtx().waveSlotsOf(findQuest(pathCfg().ch || null, team?.quest?.id));
-    const keys = specialKeysNow().keys;
+    const quest = findQuest(pathCfg().ch || null, team?.quest?.id);
+    const waves = getCtx().waveSlotsOf(quest);
+    const waveCount = waves?.length ?? 0;
+    const turnCount = (team?.actions || []).filter((a) => a.type === 'attack').length;
+    const suggest = inferWaveTurns(team, waves || null);
     return {
-      tags: { keys, cards: describeCardTags(team, ccTable()) },
-      turns: describeTurns(team, waves?.length ?? 0),
+      tags: { keys: specialKeysNow().keys, cards: describeCardTags(team, ccTable()) },
+      turns: describeTurns(team, waveCount, suggest),
+      waveTurnsSuggest: suggest,
+      turnCount,
+      waveCount,
+      waveSlots: waves || null,
+      questFound: waveCount > 0,
       shuffle: needsShuffle(team) ? { needed: true } : null,
     };
   }
@@ -235,7 +243,7 @@ async function handle(req, res) {
     overrides.bbSpecialKeys = overrides.cardKeys ? specialKeysNow().raw : null;
     overrides.__quest = findQuest(pathCfg().ch, team?.quest?.id);
     const { json, warnings, meta } = convertTeam(team, getCtx(), overrides);
-    const name = safeName(team.team?.name || ('team' + index));
+    const name = safeName(body.name || team.team?.name || ('team' + index));
     const dir = outDirPath();
     fs.mkdirSync(dir, { recursive: true });
     const outPath = path.join(dir, name + '.json');
@@ -365,7 +373,8 @@ async function handle(req, res) {
     const { json, warnings, meta } = convertTeam(team, getCtx(), overrides);
     const dir = outDirPath();
     fs.mkdirSync(dir, { recursive: true });
-    const outPath = path.join(dir, name);
+    const want = String(body.saveName || '').trim();
+    const outPath = path.join(dir, want ? safeName(want.replace(/\.json$/i, '')) + '.json' : name);
     fs.writeFileSync(outPath, JSON.stringify(json, null, 4), 'utf8');
     return sendJson(res, 200, {
       ok: true, outPath: path.relative(ROOT, outPath), absPath: outPath, warnings, meta, json,
