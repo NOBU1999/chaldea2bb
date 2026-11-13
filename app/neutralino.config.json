@@ -1,6 +1,6 @@
 {
   "applicationId": "com.chaldea2bb.app",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "defaultMode": "window",
   "port": 5188,
   "documentRoot": "/resources/",
