@@ -527,8 +527,11 @@ export function convertTeam(team, ctx, overrides = {}) {
   // 常规是 3 面 3 回合；柱柱战这类只有一面、可能打很多回合，多出来的回合都归那一面 —— 所以超出面数时按最后一面算。
   const turnCount = (team.actions || []).filter(a => a.type === 'attack').length;
   const waveCount = waveSlots?.length ?? 0;
-  // 用户指定了「每面几个回合」就按它分组；没指定则退回默认（一个回合当一个面）
-  const planRounds = roundsFromWaveTurns(turnCount, overrides?.waveTurns);
+  // 用户指定了「每面几个回合」就按它分组；没指定则用与弹窗同一份推断（目标站位唯一解），
+  // 推不出才退回默认（一个回合当一个面）。两边必须同源，否则弹窗里的回合键和输出对不上：
+  // 单面 2 回合时弹窗给的是 r1t0/r1t1，而输出若走默认会写成 round1_turn0 + round2_turn0，注入就落空了。
+  const autoWaveTurns = overrides?.waveTurns ? null : inferWaveTurns(team, waveSlots);
+  const planRounds = roundsFromWaveTurns(turnCount, overrides?.waveTurns || autoWaveTurns);
   const turnWave = new Map();
   if (planRounds) planRounds.forEach((idxs, wi) => idxs.forEach((ti) => turnWave.set(ti, wi)));
   if (planRounds) {
