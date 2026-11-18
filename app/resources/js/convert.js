@@ -468,6 +468,7 @@ export function convertTeam(team, ctx, overrides = {}) {
     2301100: { named: 'Gyokuto', idx: 1, opts: ['All', 'One'], label: '全体/单体' },
     603800: { named: 'Charlotte', idx: 2, opts: ['Q', 'A', 'B'], label: '特攻颜色' },
     1002000: { named: 'Flora', idx: 2, opts: ['T', 'D'], label: '充能阶段' },
+    1002100: { named: 'Flora', idx: 2, opts: ['T', 'D'], label: '充能阶段' },
     505600: { named: 'Prelati', idx: 0, opts: ['不替换', '替换'], label: '是否替换' },
     505700: { named: 'Prelati', idx: 0, opts: ['不替换', '替换'], label: '是否替换' },
     405900: { named: 'Lilith', idx: 2, opts: ['不付与即死', '付与即死'], label: '是否付与即死' },
@@ -627,14 +628,16 @@ export function convertTeam(team, ctx, overrides = {}) {
       } else {
       // ActSet：技能带“消耗暴击星”这类选项时，记录里的选择按执行顺序排列
       let starFlag = null;
+      // 带选择框的技能（SelectAddInfo 与 ActSelectIndex 一一对应）：Chaldea 把每次的选择按顺序排队
+      let selPick = null;
       if (!isMC && skillId) {
         if (hasFlag(skillId, 'ActSet') && actWeightQueue.length) {
           const v = actWeightQueue.shift();
           starFlag = (typeof v === 'number' && v >= 1) ? 1 : 0;
         }
-        if (hasFlag(skillId, 'ActSelectIndex') && actSelectQueue.length) {
-          const v = actSelectQueue.shift();
-          starFlag = (typeof v === 'number' && v >= 1) ? 1 : 0;
+        if (hasFlag(skillId, 'ActSelectIndex')) {
+          const v = actSelectQueue.length ? actSelectQueue.shift() : null;
+          selPick = typeof v === 'number' ? v : null;
         }
       }
       if (!isMC && actor && HAKUNO_SVTS.has(actor.svtId) && idx === 0) {
@@ -661,8 +664,11 @@ export function convertTeam(team, ctx, overrides = {}) {
       } else if (named) {
         // 第三个参数：Kukulkan 是 0/1 吃星，其它是那张表里的字面值
         let choice;
+        const picked = (selPick != null && spec.opts[selPick] !== undefined) ? spec.opts[selPick] : null;
         if (spec.idx === null) { // 只有库库尔坎的第三个参数是“吃不吃星”，其余都是表里的字面值
-          choice = starFlag ?? (needTarget ? 0 : 1);
+          choice = (selPick === 0 || selPick === 1) ? selPick : (starFlag ?? (needTarget ? 0 : 1));
+        } else if (picked !== null) {
+          choice = picked;
         } else {
           choice = spec.opts[0];
           warnOnce('opt-' + actor.svtId + '-' + idx, '特殊从者选项：' + nameOf(actor) + ' 技能' + (idx + 1) + ' 要带「' + spec.label + '」（' + spec.opts.join(' / ') + '），记录里没有这个选择，先按「' + choice + '」写，必要时手工改');
